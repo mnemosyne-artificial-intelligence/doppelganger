@@ -18,14 +18,14 @@ docker build -t doppelganger-scraper .
 ### 2. Run the Container
 ```bash
 docker run -d \
-  -p 3000:3000 \
+  -p 11345:11345 \
   -v $(pwd)/storage_state.json:/app/storage_state.json \
   -v $(pwd)/public/screenshots:/app/public/screenshots \
   --name doppelganger \
   doppelganger-scraper
 ```
 
-*   **Access the UI**: Open `http://localhost:3000/test` in your browser.
+*   **Access the UI**: Open `http://localhost:11345/test` in your browser.
 *   **API Endpoints**: `POST /agent` or `POST /scrape`
 
 ---
@@ -80,7 +80,7 @@ Doppelgänger includes a built-in dashboard for rapid action planning.
 ## 🧪 cURL API Example
 
 ```bash
-curl -X POST http://localhost:3000/agent \
+curl -X POST http://localhost:11345/agent \
      -H "Content-Type: application/json" \
      -d '{
        "url": "https://www.example.com",

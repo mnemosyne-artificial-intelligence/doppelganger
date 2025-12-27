@@ -18,7 +18,7 @@
     "bcryptjs": "^3.0.3",
     "express": "^5.2.1",
     "express-session": "^1.18.2",
-    "jsdom": "^27.4.0",
+    "jsdom": "^22.1.0",
     "lucide-react": "^0.562.0",
     "pg": "^8.16.3",
     "playwright": "^1.57.0",

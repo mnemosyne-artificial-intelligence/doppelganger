@@ -1,26 +1,31 @@
-# Use Microsoft's official Playwright image as base
-FROM mcr.microsoft.com/playwright:v1.40.0-focal
+FROM mcr.microsoft.com/playwright:v1.40.0-focal AS build
 
-# Set working directory
 WORKDIR /app
 
-# Copy package files
+# Install deps (include dev deps for build)
 COPY package*.json ./
+RUN npm ci --include=dev
 
-# Install dependencies
-RUN npm ci
-
-# Build frontend assets
+# Build frontend
+COPY . .
 RUN npm run build
 
-# Copy the rest of the application
-COPY . .
+FROM mcr.microsoft.com/playwright:v1.40.0-focal AS runtime
 
-# Expose the API port
+WORKDIR /app
+
+# Install production deps only
+COPY package*.json ./
+RUN npm ci --omit=dev
+
+# Copy server and built assets
+COPY --from=build /app/dist /app/dist
+COPY --from=build /app/public /app/public
+COPY --from=build /app/data /app/data
+COPY --from=build /app/storage_state.json /app/storage_state.json
+COPY --from=build /app/*.js /app/
+
 EXPOSE 11345
-
-# Set environment to production
 ENV NODE_ENV=production
 
-# Command to run the server
 CMD ["node", "server.js"]

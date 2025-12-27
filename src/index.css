@@ -1,0 +1,286 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+    color-scheme: dark;
+}
+
+body {
+    margin: 0;
+    display: flex;
+    min-width: 320px;
+    min-height: 100vh;
+    background-color: #020202;
+}
+
+#root {
+    width: 100%;
+}
+
+.glass {
+    background: rgba(10, 10, 10, 0.9);
+    backdrop-filter: blur(64px);
+    -webkit-backdrop-filter: blur(64px);
+}
+
+.glass-card {
+    background: rgba(255, 255, 255, 0.015);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-card:hover {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.15);
+}
+
+.shine-effect {
+    position: relative;
+    overflow: hidden;
+}
+
+.shine-effect::after {
+    content: '';
+    position: absolute;
+    top: -50%;
+    left: -100%;
+    width: 33.333333%;
+    height: 200%;
+    background: rgba(255, 255, 255, 0.2);
+    transform: rotate(25deg);
+    pointer-events: none;
+    transition: none;
+}
+
+.shine-effect:hover::after {
+    left: 150%;
+    transition: left 0.7s ease-in-out;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 9999px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.custom-select,
+select {
+    appearance: none !important;
+    background-color: #000000 !important;
+    color: #ffffff !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    border-radius: 12px !important;
+    padding: 0.4rem 2rem 0.4rem 0.75rem !important;
+    cursor: pointer !important;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='white' stroke-width='3'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E") !important;
+    background-repeat: no-repeat !important;
+    background-position: right 0.6rem center !important;
+    background-size: 10px !important;
+    transition: all 0.2s ease !important;
+}
+
+.custom-select:hover,
+select:hover {
+    border-color: rgba(255, 255, 255, 0.3);
+}
+
+.custom-select option,
+select option {
+    background: #000000;
+    color: #ffffff;
+    padding: 10px;
+}
+
+.action-type-select {
+    min-width: 96px !important;
+    box-sizing: border-box !important;
+    border-radius: 10px !important;
+    border-color: rgba(255, 255, 255, 0.15) !important;
+    background-color: rgba(0, 0, 0, 0.6) !important;
+    padding: 0.3rem 2.2rem 0.3rem 0.65rem !important;
+    position: relative !important;
+    z-index: 9999 !important;
+    background-clip: padding-box !important;
+}
+
+.action-type-select:focus {
+    border-color: rgba(255, 255, 255, 0.35) !important;
+}
+
+.action-card-item.dragging {
+    opacity: 0.5;
+}
+
+.action-card-item.drag-over-top {
+    border-top: 2px solid rgba(59, 130, 246, 0.5);
+}
+
+.action-card-item.drag-over-bottom {
+    border-bottom: 2px solid rgba(59, 130, 246, 0.5);
+}
+
+/* Variable syntax highlighting */
+.var-highlight {
+    background: rgba(59, 130, 246, 0.2);
+    color: #60a5fa;
+    font-family: 'JetBrains Mono', monospace;
+    padding: 0 2px;
+    border-radius: 3px;
+    font-weight: 500;
+}
+
+.var-highlight-undefined {
+    background: rgba(239, 68, 68, 0.2);
+    color: #f87171;
+    font-family: 'JetBrains Mono', monospace;
+    padding: 0 2px;
+    border-radius: 3px;
+    font-weight: 500;
+}
+
+.var-highlight-default {
+    background: rgba(34, 197, 94, 0.2);
+    color: #4ade80;
+    font-family: 'JetBrains Mono', monospace;
+    padding: 0 2px;
+    border-radius: 3px;
+    font-weight: 500;
+}
+
+.rich-input-content {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+.rich-input-content:empty:before {
+    content: attr(data-placeholder);
+    color: rgba(107, 114, 128, 0.6);
+    pointer-events: none;
+}
+
+.rich-input-content:focus {
+    outline: none;
+}
+
+.code-editor {
+    position: relative;
+    width: 100%;
+    min-height: 120px;
+    background: #050505;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 14px;
+    overflow: hidden;
+}
+
+.code-editor-pre {
+    margin: 0;
+    padding: 1rem;
+    padding-bottom: 1.25rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    line-height: 1.6;
+    font-variant-ligatures: none;
+    tab-size: 4;
+    color: rgba(147, 197, 253, 0.7);
+    white-space: pre;
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+
+.code-editor-textarea {
+    position: absolute;
+    inset: 0 0 12px 0;
+    width: 100%;
+    height: calc(100% - 12px);
+    resize: none;
+    background: transparent;
+    color: transparent;
+    caret-color: #ffffff;
+    border: none;
+    padding: 1rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    line-height: 1.6;
+    font-variant-ligatures: none;
+    tab-size: 4;
+    outline: none;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+
+.code-editor-textarea::-webkit-scrollbar {
+    display: none;
+}
+
+.code-editor-textarea-readonly {
+    pointer-events: none;
+}
+
+.code-editor-placeholder {
+    color: rgba(107, 114, 128, 0.6);
+}
+
+.code-token-keyword {
+    color: #93c5fd;
+}
+
+.code-token-string {
+    color: #86efac;
+}
+
+.code-token-number {
+    color: #fbbf24;
+}
+
+.code-token-comment {
+    color: #6b7280;
+    font-style: italic;
+}
+
+.code-token-boolean,
+.code-token-null {
+    color: #fca5a5;
+}
+
+.code-token-identifier {
+    color: #e5e7eb;
+}
+
+.code-token-key {
+    color: #67e8f9;
+}
+
+.code-token-tag {
+    color: #60a5fa;
+}
+
+.code-token-attr {
+    color: #fcd34d;
+}
+
+.code-token-punct {
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.text-vertical {
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    transform: rotate(180deg);
+}

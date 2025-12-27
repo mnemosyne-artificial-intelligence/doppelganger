@@ -1,98 +1,111 @@
-# Doppelgänger 🕵️‍♂️
+# Doppelganger
 
-**The high-performance, stealth-focused browser automation microservice.**
+[![Docker](https://img.shields.io/badge/docker-mnemosyneai%2Fdoppelganger-0db7ed)](https://hub.docker.com/r/mnemosyneai/doppelganger)
+[![Self-Hosted](https://img.shields.io/badge/self--hosted-local--first-2f855a)](#getting-started)
 
-Based on Microsoft's Playwright, Doppelgänger is designed for seamless data extraction and web infiltration. It features advanced behavioral simulation to bypass detection and captures mission telemetry through human behavior simulation.
+Doppelganger is a self-hosted, developer-focused browser automation and extraction tool. It runs locally via Docker and provides a DIY workflow for building automation tasks with blocks and optional JavaScript customization.
 
----
+This project is designed for local, controlled use cases. It does not claim to bypass protections and does not encourage unlawful activity.
 
-## 🐳 Quick Start with Docker
+## Getting Started (Docker)
 
-Doppelgänger is optimized for standard Docker environments, ensuring all browser dependencies are pre-configured.
+### Requirements
+- Docker Desktop or Docker Engine
+- x86_64 or ARM64 host
+- 4GB+ RAM recommended
 
-### 1. Build the Image
+### Pull the Image
 ```bash
-docker build -t doppelganger-scraper .
+docker pull mnemosyneai/doppelganger
 ```
 
-### 2. Run the Container
+### Run the Container
 ```bash
 docker run -d \
-  -p 11345:11345 \
-  -v $(pwd)/storage_state.json:/app/storage_state.json \
-  -v $(pwd)/public/screenshots:/app/public/screenshots \
   --name doppelganger \
-  doppelganger-scraper
+  -p 11345:11345 \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/public:/app/public \
+  -v $(pwd)/storage_state.json:/app/storage_state.json \
+  mnemosyneai/doppelganger
 ```
 
-*   **Access the UI**: Open `http://localhost:11345/test` in your browser.
-*   **API Endpoints**: `POST /agent` or `POST /scrape`
+Open the dashboard at:
+```
+http://localhost:11345
+```
 
----
-
-## 🎭 Mission Modes
-
-### 1. Scraper Mode (`/scrape`)
-**Best for: Public data and rapid monitoring.**
-A stateless engine optimized for speed. It navigates, waits, and extracts content instantly. Ideal for SEO tracking, price monitoring, and public indexing.
-
-### 2. Agent Mode (`/agent`)
-**Best for: Authenticated portals and anti-bot bypass.**
-A stateful engine that simulates human behavior (clicks, typing, physics-based scrolling) to remain undetected. Perfect for social media automation and deep-site scraping.
-
-### 3. Headful Mode (`/headful`)
-**Best for: Manual Auth (2FA, Captchas).**
-A bootstrap mode that launches a visible browser window. Use this for initial login rituals. Once closed, your session is saved to `storage_state.json` and inherited by all headless automation.
-
----
-
-## 🦾 Advanced Stealth Features
-
-| Feature | User Value |
-| :--- | :--- |
-| **Rotate UA** | Randomized browser fingerprints to prevent detection. |
-| **Natural Typing** | Rhythmic, variable delays mimicking human input speed. |
-| **Human Typos** | Occasional mistakes and corrections to bypass behavioral analysis. |
-| **Restless Idle** | Keeps the session "alive" with natural cursor jitters and drifts. |
-| **Overscroll** | Physics-based scrolling with realistic human overshoot. |
-| **Dead Clicks** | Random non-functional clicks to mimic exploration. |
-| **Fatigue Emulation** | Increasing response variability over long sessions. |
-
----
-
-## 🔒 Session & Asset Persistence
-
-To ensure your sessions and captured data survive container updates, always mount these volumes:
-*   **`storage_state.json`**: Keeps your logged-in cookies and localStorage persistent.
-*   **`public/screenshots`**: Stores all captured visual telemetry files.
-
----
-
-## 🎮 Visual Action Builder (BETA)
-
-Doppelgänger includes a built-in dashboard for rapid action planning.
-*   **Visual Interface**: Build complex "Agent" sequences without writing code.
-*   **Real-time Sync**: Watch your visual steps turn into technical JSON scripts instantly.
-*   **Live Metrics**: View browser screenshots and execution logs in a premium dark-mode interface.
-
----
-
-## 🧪 cURL API Example
-
+### Update to Latest
 ```bash
-curl -X POST http://localhost:11345/agent \
-     -H "Content-Type: application/json" \
-     -d '{
-       "url": "https://www.example.com",
-       "actions": [
-         { "type": "fill", "selector": "#search", "value": "Agent Zero" },
-         { "type": "press", "key": "Enter" }
-       ]
-     }'
+docker pull mnemosyneai/doppelganger
+docker stop doppelganger
+docker rm doppelganger
+docker run -d \
+  --name doppelganger \
+  -p 11345:11345 \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/public:/app/public \
+  -v $(pwd)/storage_state.json:/app/storage_state.json \
+  mnemosyneai/doppelganger
 ```
 
----
+## Usage
 
-## 📄 License
-This project is licensed under the **Apache License 2.0**. See the [LICENSE](LICENSE) file for the full text.
+### Open the Dashboard
+Navigate to:
+```
+http://localhost:11345
+```
 
+### Create a Task (Block-Based)
+1. Click **New Task**
+2. Choose a mode (Scrape, Agent, Headful)
+3. Add action blocks (click, type, hover, wait, scroll, press, javascript)
+4. Configure variables and selectors
+5. Save and run
+
+### Example Workflow (Safe Demo)
+Goal: Load a public page, wait, and extract a title.
+1. Create a new task
+2. Set URL to `https://example.com`
+3. Add a **wait** block (2 seconds)
+4. Add a **javascript** block:
+```js
+return document.title;
+```
+5. Run the task and view the output
+
+### JSON Export
+In the task editor, open the JSON view and copy the task definition for reuse.
+
+### JavaScript Blocks
+JavaScript blocks allow custom extraction or page logic. Use them for:
+- Parsing DOM elements
+- Returning structured data
+- Adding custom logic to actions
+
+## AI Features (Optional)
+AI-assisted script generation may be added in the future.
+- You would provide your own API key
+- You would choose the model
+- AI does not execute tasks automatically
+
+## Community and Presets
+Community-contributed presets or examples may be shared in the future.
+- Use community content at your own risk
+- The author is not responsible for community content
+- Always use the tool safely and legally
+
+## License
+This project uses a Sustainable Use License (SUL). See `LICENSE`.
+
+## Disclaimer
+The software is provided "as-is" without warranty. You are solely responsible for:
+- Your scripts and automation behavior
+- The data you access or collect
+- Any consequences of use
+
+Do not use this tool in ways that violate laws or third-party terms.
+
+## Links
+- Docker Hub: https://hub.docker.com/r/mnemosyneai/doppelganger

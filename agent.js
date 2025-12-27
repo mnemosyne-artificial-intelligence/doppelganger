@@ -1,4 +1,5 @@
 const { chromium } = require('playwright');
+const { JSDOM } = require('jsdom');
 const fs = require('fs');
 const path = require('path');
 
@@ -42,13 +43,26 @@ async function overshootScroll(page, targetY) {
     await page.evaluate((y) => window.scrollTo({ top: y, behavior: 'smooth' }), targetY);
 }
 
-async function humanType(page, selector, text) {
-    await page.focus(selector);
+const punctuationPause = /[.,!?;:]/;
+
+const randomBetween = (min, max) => min + Math.random() * (max - min);
+
+async function humanType(page, selector, text, options = {}) {
+    const { allowTypos = false, naturalTyping = false } = options;
+    if (selector) await page.focus(selector);
     const chars = text.split('');
+    let burstCounter = 0;
+    const burstLimit = naturalTyping ? Math.floor(randomBetween(6, 16)) : 999;
+    const baseDelay = naturalTyping ? randomBetween(35, 120) : randomBetween(25, 80);
 
     for (const char of chars) {
-        // 5% chance of a typo
-        if (Math.random() < 0.05) {
+        if (naturalTyping && burstCounter >= burstLimit) {
+            await page.waitForTimeout(randomBetween(120, 320));
+            burstCounter = 0;
+        }
+
+        // Typo + correction
+        if (allowTypos && Math.random() < (naturalTyping ? 0.08 : 0.03)) {
             const keys = 'qwertyuiopasdfghjklzxcvbnm';
             const typo = keys[Math.floor(Math.random() * keys.length)];
             await page.keyboard.press(typo, { delay: 50 + Math.random() * 100 });
@@ -56,19 +70,28 @@ async function humanType(page, selector, text) {
             await page.keyboard.press('Backspace', { delay: 50 + Math.random() * 100 });
             await page.waitForTimeout(100 + Math.random() * 200);
         }
-        await page.keyboard.press(char, { delay: 50 + Math.random() * 150 });
+
+        const extra = punctuationPause.test(char) ? randomBetween(120, 260) : randomBetween(0, 80);
+        await page.keyboard.press(char, { delay: baseDelay + extra });
+        burstCounter += 1;
+
+        if (naturalTyping && char === ' ') {
+            await page.waitForTimeout(randomBetween(40, 140));
+        }
     }
 }
 
 async function handleAgent(req, res) {
     const data = (req.method === 'POST') ? req.body : req.query;
     let { url, actions, wait: globalWait, rotateUserAgents, humanTyping, stealth = {} } = data;
+    const includeShadowDom = true;
     const {
         allowTypos = false,
         idleMovements = false,
         overscroll = false,
         deadClicks = false,
-        fatigue = false
+        fatigue = false,
+        naturalTyping = false
     } = stealth;
 
     if (typeof actions === 'string') {
@@ -133,15 +156,20 @@ async function handleAgent(req, res) {
 
         const logs = [];
         let actionIdx = 0;
+        const baseDelay = (ms) => {
+            const fatigueMultiplier = fatigue ? 1 + (actionIdx * 0.1) : 1;
+            return (ms + Math.random() * 100) * fatigueMultiplier;
+        };
 
         for (const act of actions) {
             actionIdx++;
             const { type, selector, value, key, timeout } = act;
             const actionTimeout = timeout || 10000;
 
-            // Fatigue logic: increase delays slightly as more actions are performed
-            const fatigueMultiplier = fatigue ? 1 + (actionIdx * 0.1) : 1;
-            const baseDelay = (ms) => (ms + Math.random() * 100) * fatigueMultiplier;
+            if (act.disabled) {
+                logs.push(`SKIPPED disabled action: ${type}`);
+                continue;
+            }
 
             try {
                 switch (type) {
@@ -177,20 +205,36 @@ async function handleAgent(req, res) {
                         break;
                     case 'type':
                     case 'fill':
-                        logs.push(`Typing into ${selector}: ${value}`);
-                        await page.waitForSelector(selector, { timeout: actionTimeout });
-
-                        if (humanTyping) {
-                            if (allowTypos) {
-                                await humanType(page, selector, value);
+                        if (selector) {
+                            logs.push(`Typing into ${selector}: ${value}`);
+                            await page.waitForSelector(selector, { timeout: actionTimeout });
+                            if (humanTyping) {
+                                await humanType(page, selector, value, { allowTypos, naturalTyping });
                             } else {
-                                await page.type(selector, value, {
-                                    delay: baseDelay(50)
-                                });
+                                await page.fill(selector, value);
                             }
                         } else {
-                            await page.fill(selector, value);
+                            logs.push(`Typing (global): ${value}`);
+                            if (humanTyping) {
+                                await humanType(page, null, value, { allowTypos, naturalTyping });
+                            } else {
+                                await page.keyboard.type(value, { delay: baseDelay(50) });
+                            }
                         }
+                        break;
+                    case 'hover':
+                        logs.push(`Hovering: ${selector}`);
+                        await page.waitForSelector(selector, { timeout: actionTimeout });
+                        {
+                            const handle = await page.$(selector);
+                            const box = handle && await handle.boundingBox();
+                            if (box) {
+                                const centerX = box.x + box.width / 2 + (Math.random() - 0.5) * 5;
+                                const centerY = box.y + box.height / 2 + (Math.random() - 0.5) * 5;
+                                await moveMouseHumanlike(page, centerX, centerY);
+                            }
+                        }
+                        await page.waitForTimeout(baseDelay(150));
                         break;
                     case 'press':
                         logs.push(`Pressing key: ${key}`);
@@ -216,14 +260,23 @@ async function handleAgent(req, res) {
                         await page.selectOption(selector, value);
                         break;
                     case 'scroll':
-                        logs.push('Scrolling page...');
-                        const scrollAmount = 400 + Math.random() * 400;
+                        const amount = value ? parseInt(value) : (400 + Math.random() * 400);
+                        logs.push(`Scrolling page: ${amount}px...`);
                         if (overscroll) {
-                            await overshootScroll(page, scrollAmount);
+                            await overshootScroll(page, amount);
                         } else {
-                            await page.evaluate((y) => window.scrollBy({ top: y, behavior: 'smooth' }), scrollAmount);
+                            await page.evaluate((y) => window.scrollBy({ top: y, behavior: 'smooth' }), amount);
                         }
                         await page.waitForTimeout(baseDelay(500));
+                        break;
+                    case 'javascript':
+                        logs.push('Running custom JavaScript...');
+                        if (value) {
+                            await page.evaluate((code) => {
+                                // eslint-disable-next-line no-eval
+                                return eval(code);
+                            }, value);
+                        }
                         break;
                 }
             } catch (err) {
@@ -234,14 +287,122 @@ async function handleAgent(req, res) {
         if (globalWait) await page.waitForTimeout(parseFloat(globalWait) * 1000);
         await page.waitForTimeout(baseDelay(500));
 
-        const cleanedHtml = await page.evaluate(() => {
-            const clone = document.documentElement.cloneNode(true);
-            const useless = clone.querySelectorAll('script, style, svg, link, noscript');
-            useless.forEach(node => node.remove());
-            return clone.outerHTML;
-        });
+        const cleanedHtml = await page.evaluate((withShadow) => {
+            const stripUseless = (root) => {
+                const useless = root.querySelectorAll('script, style, svg, link, noscript');
+                useless.forEach(node => node.remove());
+            };
 
-        // Simple HTML Formatter
+            const cloneWithShadow = (root) => {
+                const clone = root.cloneNode(true);
+                const walkerOrig = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+                const walkerClone = document.createTreeWalker(clone, NodeFilter.SHOW_ELEMENT);
+
+                while (walkerOrig.nextNode() && walkerClone.nextNode()) {
+                    const orig = walkerOrig.currentNode;
+                    const cloned = walkerClone.currentNode;
+                    if (orig.shadowRoot) {
+                        const template = document.createElement('template');
+                        template.setAttribute('data-shadowroot', 'open');
+                        template.innerHTML = orig.shadowRoot.innerHTML;
+                        cloned.appendChild(template);
+                    }
+                }
+
+                stripUseless(clone);
+                return clone;
+            };
+
+            const clone = withShadow ? cloneWithShadow(document.documentElement) : document.documentElement.cloneNode(true);
+            if (!withShadow) stripUseless(clone);
+            return clone.outerHTML;
+        }, includeShadowDom);
+
+        const runExtractionScript = async (script, html) => {
+            if (!script || typeof script !== 'string') return { result: undefined, logs: [] };
+            try {
+                const dom = new JSDOM(html || '');
+                const { window } = dom;
+                const logBuffer = [];
+                const consoleProxy = {
+                    log: (...args) => logBuffer.push(args.join(' ')),
+                    warn: (...args) => logBuffer.push(args.join(' ')),
+                    error: (...args) => logBuffer.push(args.join(' '))
+                };
+                const shadowHelpers = (() => {
+                    const shadowQueryAll = (selector, root = window.document) => {
+                        const results = [];
+                        const walk = (node) => {
+                            if (!node) return;
+                            if (node.nodeType === 1) {
+                                const el = node;
+                                if (selector && el.matches && el.matches(selector)) results.push(el);
+                                if (el.tagName === 'TEMPLATE' && el.hasAttribute('data-shadowroot')) {
+                                    walk(el.content);
+                                }
+                            } else if (node.nodeType === 11) {
+                                // DocumentFragment
+                            }
+                            if (node.childNodes) {
+                                node.childNodes.forEach((child) => walk(child));
+                            }
+                        };
+                        walk(root);
+                        return results;
+                    };
+
+                    const shadowText = (root = window.document) => {
+                        const texts = [];
+                        const walk = (node) => {
+                            if (!node) return;
+                            if (node.nodeType === 3) {
+                                const text = node.nodeValue ? node.nodeValue.trim() : '';
+                                if (text) texts.push(text);
+                                return;
+                            }
+                            if (node.nodeType === 1) {
+                                const el = node;
+                                if (el.tagName === 'TEMPLATE' && el.hasAttribute('data-shadowroot')) {
+                                    walk(el.content);
+                                }
+                            }
+                            if (node.childNodes) {
+                                node.childNodes.forEach((child) => walk(child));
+                            }
+                        };
+                        walk(root);
+                        return texts;
+                    };
+
+                    return { shadowQueryAll, shadowText };
+                })();
+
+                const executor = new Function(
+                    '$$data',
+                    'window',
+                    'document',
+                    'DOMParser',
+                    'console',
+                    `"use strict"; return (async () => { ${script}\n})();`
+                );
+                const $$data = {
+                    html: () => html || '',
+                    window,
+                    document: window.document,
+                    shadowQueryAll: includeShadowDom ? shadowHelpers.shadowQueryAll : undefined,
+                    shadowText: includeShadowDom ? shadowHelpers.shadowText : undefined
+                };
+                const result = await executor($$data, window, window.document, window.DOMParser, consoleProxy);
+                return { result, logs: logBuffer };
+            } catch (e) {
+                return { result: `Extraction script error: ${e.message}`, logs: [] };
+            }
+        };
+
+        const extractionScript = typeof data.extractionScript === 'string' ? data.extractionScript : undefined;
+        const extraction = await runExtractionScript(extractionScript, cleanedHtml);
+
+        // Simple HTML Formatter (fallback to raw if formatting collapses content)
         const formatHTML = (html) => {
             let indent = 0;
             return html.replace(/<(\/?)([a-z0-9]+)([^>]*?)(\/?)>/gi, (match, slash, tag, attrs, selfClose) => {
@@ -250,6 +411,18 @@ async function handleAgent(req, res) {
                 if (!slash && !selfClose && !['img', 'br', 'hr', 'input', 'link', 'meta'].includes(tag.toLowerCase())) indent++;
                 return '\n' + result;
             }).trim();
+        };
+
+        const safeFormatHTML = (html) => {
+            if (typeof html !== 'string') return '';
+            try {
+                const formatted = formatHTML(html);
+                if (!formatted) return html;
+                if (formatted.length < Math.max(200, Math.floor(html.length * 0.5))) return html;
+                return formatted;
+            } catch {
+                return html;
+            }
         };
 
         // Ensure the public/screenshots directory exists
@@ -266,15 +439,17 @@ async function handleAgent(req, res) {
             console.error('Agent Screenshot failed:', e.message);
         }
 
+        // Defensive return for the frontend: always return fields, even if empty on error
         const outputData = {
-            final_url: page.url(),
-            logs: logs,
-            html: formatHTML(cleanedHtml),
-            screenshot_url: `/screenshots/${screenshotName}`
+            final_url: page.url() || url || '',
+            logs: logs || [],
+            html: typeof cleanedHtml === 'string' ? safeFormatHTML(cleanedHtml) : '',
+            data: extraction.result !== undefined ? extraction.result : (extraction.logs.length ? extraction.logs.join('\n') : undefined),
+            screenshot_url: fs.existsSync(screenshotPath) ? `/screenshots/${screenshotName}` : null
         };
 
-        await context.storageState({ path: STORAGE_STATE_PATH });
-        await browser.close();
+        try { await context.storageState({ path: STORAGE_STATE_PATH }); } catch {}
+        try { await browser.close(); } catch {}
         res.json(outputData);
     } catch (error) {
         console.error('Agent Error:', error);

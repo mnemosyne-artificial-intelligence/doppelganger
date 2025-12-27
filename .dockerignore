@@ -1,6 +1,9 @@
 node_modules
-npm-debug.log
+dist
+data
 storage_state.json
 .git
 .env
 public/screenshots
+.vscode
+.DS_Store

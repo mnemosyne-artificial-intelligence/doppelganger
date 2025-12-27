@@ -10,7 +10,15 @@ const userAgents = [
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
 ];
 
+let activeSession = null;
+
 async function handleHeadful(req, res) {
+    if (activeSession) {
+        return res.status(409).json({ error: 'HEADFUL_ALREADY_RUNNING' });
+    }
+
+    activeSession = { status: 'starting' };
+
     const url = req.body.url || req.query.url || 'https://www.google.com';
 
     // We stick to the first UA in the list for headful mode to ensure consistency
@@ -59,10 +67,19 @@ async function handleHeadful(req, res) {
         // Auto-save every 10 seconds while the window is open
         const interval = setInterval(saveState, 10000);
 
+        activeSession = { browser, context, interval, status: 'running' };
+
         // Save when the page is closed
         page.on('close', async () => {
             clearInterval(interval);
             await saveState();
+        });
+
+        // Respond immediately; cleanup runs after disconnect
+        res.json({
+            message: 'Headful session started. Close the browser window or call /headful/stop to end.',
+            userAgentUsed: selectedUA,
+            path: STORAGE_STATE_PATH
         });
 
         // Wait for the browser to disconnect (user closes the last window)
@@ -72,17 +89,35 @@ async function handleHeadful(req, res) {
 
         // Final attempt to save if context is alive
         await saveState();
-
-        res.json({
-            message: 'Headful session closed. Cookies and storage state have been saved.',
-            userAgentUsed: selectedUA,
-            path: STORAGE_STATE_PATH
-        });
+        activeSession = null;
     } catch (error) {
         console.error('Headful Error:', error);
         if (browser) await browser.close();
+        activeSession = null;
         res.status(500).json({ error: 'Failed to start headful session', details: error.message });
     }
 }
 
-module.exports = { handleHeadful };
+async function stopHeadful(req, res) {
+    if (!activeSession) {
+        return res.status(200).json({ message: 'No active headful session.' });
+    }
+
+    try {
+        if (activeSession.interval) clearInterval(activeSession.interval);
+        if (activeSession.context) {
+            await activeSession.context.storageState({ path: STORAGE_STATE_PATH });
+        }
+    } catch {}
+
+    try {
+        if (activeSession.browser) {
+            await activeSession.browser.close();
+        }
+    } catch {}
+
+    activeSession = null;
+    res.json({ message: 'Headful session stopped.' });
+}
+
+module.exports = { handleHeadful, stopHeadful };

@@ -1,51 +1,612 @@
 const express = require('express');
+const session = require('express-session');
+const FileStore = require('session-file-store')(session);
+const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const app = express();
-const port = 11345;
+const port = process.env.PORT || 11345;
+const DIST_DIR = path.join(__dirname, 'dist');
+
+const USERS_FILE = path.join(__dirname, 'data', 'users.json');
+
+// Ensure data directory exists
+if (!fs.existsSync(path.join(__dirname, 'data'))) {
+    fs.mkdirSync(path.join(__dirname, 'data'));
+}
+
+// Ensure sessions directory exists
+const SESSIONS_DIR = path.join(__dirname, 'data', 'sessions');
+if (!fs.existsSync(SESSIONS_DIR)) {
+    fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+}
+
+// Helper to load users
+function loadUsers() {
+    if (!fs.existsSync(USERS_FILE)) return [];
+    try {
+        return JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
+    } catch (e) {
+        return [];
+    }
+}
+
+// Helper to save users
+function saveUsers(users) {
+    fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
+}
+
+const TASKS_FILE = path.join(__dirname, 'data', 'tasks.json');
+const API_KEY_FILE = path.join(__dirname, 'data', 'api_key.json');
+const STORAGE_STATE_PATH = path.join(__dirname, 'storage_state.json');
+const MAX_TASK_VERSIONS = 30;
+const EXECUTIONS_FILE = path.join(__dirname, 'data', 'executions.json');
+const MAX_EXECUTIONS = 500;
+
+// Helper to load tasks
+function loadTasks() {
+    if (!fs.existsSync(TASKS_FILE)) return [];
+    try {
+        return JSON.parse(fs.readFileSync(TASKS_FILE, 'utf8'));
+    } catch (e) {
+        return [];
+    }
+}
+
+// Helper to save tasks
+function saveTasks(tasks) {
+    fs.writeFileSync(TASKS_FILE, JSON.stringify(tasks, null, 2));
+}
+
+function cloneTaskForVersion(task) {
+    const copy = JSON.parse(JSON.stringify(task || {}));
+    if (copy.versions) delete copy.versions;
+    return copy;
+}
+
+function appendTaskVersion(task) {
+    if (!task) return;
+    if (!task.versions) task.versions = [];
+    const version = {
+        id: 'ver_' + Date.now(),
+        timestamp: Date.now(),
+        snapshot: cloneTaskForVersion(task)
+    };
+    task.versions.unshift(version);
+    if (task.versions.length > MAX_TASK_VERSIONS) {
+        task.versions = task.versions.slice(0, MAX_TASK_VERSIONS);
+    }
+}
+
+function loadExecutions() {
+    if (!fs.existsSync(EXECUTIONS_FILE)) return [];
+    try {
+        return JSON.parse(fs.readFileSync(EXECUTIONS_FILE, 'utf8'));
+    } catch (e) {
+        return [];
+    }
+}
+
+function saveExecutions(executions) {
+    fs.writeFileSync(EXECUTIONS_FILE, JSON.stringify(executions, null, 2));
+}
+
+function appendExecution(entry) {
+    const executions = loadExecutions();
+    executions.unshift(entry);
+    if (executions.length > MAX_EXECUTIONS) {
+        executions.length = MAX_EXECUTIONS;
+    }
+    saveExecutions(executions);
+}
+
+function registerExecution(req, res, baseMeta = {}) {
+    const start = Date.now();
+    const requestId = 'exec_' + start + '_' + Math.floor(Math.random() * 1000);
+    res.locals.executionId = requestId;
+    res.on('finish', () => {
+        const durationMs = Date.now() - start;
+        const body = req.body || {};
+        const entry = {
+            id: requestId,
+            timestamp: start,
+            method: req.method,
+            path: req.path,
+            status: res.statusCode,
+            durationMs,
+            source: body.runSource || req.query.runSource || baseMeta.source || 'unknown',
+            mode: body.mode || baseMeta.mode || 'unknown',
+            taskId: body.taskId || baseMeta.taskId || null,
+            taskName: body.name || baseMeta.taskName || null,
+            url: body.url || req.query.url || null
+        };
+        appendExecution(entry);
+    });
+}
+
+// Helper to load API key
+function loadApiKey() {
+    let apiKey = null;
+    if (fs.existsSync(API_KEY_FILE)) {
+        try {
+            const data = JSON.parse(fs.readFileSync(API_KEY_FILE, 'utf8'));
+            apiKey = data && data.apiKey ? data.apiKey : null;
+        } catch (e) {
+            apiKey = null;
+        }
+    }
+
+    if (!apiKey && fs.existsSync(USERS_FILE)) {
+        try {
+            const users = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
+            if (Array.isArray(users) && users.length > 0 && users[0].apiKey) {
+                apiKey = users[0].apiKey;
+                saveApiKey(apiKey);
+            }
+        } catch (e) {
+            // ignore
+        }
+    }
+
+    return apiKey;
+}
+
+// Helper to save API key
+function saveApiKey(apiKey) {
+    fs.writeFileSync(API_KEY_FILE, JSON.stringify({ apiKey }, null, 2));
+    if (fs.existsSync(USERS_FILE)) {
+        try {
+            const users = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
+            if (Array.isArray(users) && users.length > 0) {
+                users[0].apiKey = apiKey;
+                fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
+            }
+        } catch (e) {
+            // ignore
+        }
+    }
+}
+
+function generateApiKey() {
+    return crypto.randomBytes(32).toString('hex');
+}
 
 const { handleScrape } = require('./scrape');
 const { handleAgent } = require('./agent');
-const { handleHeadful } = require('./headful');
+const { handleHeadful, stopHeadful } = require('./headful');
 
 app.use(express.json());
-app.use(express.static('public'));
+app.use(session({
+    store: new FileStore({
+        path: SESSIONS_DIR,
+        ttl: 7 * 24 * 60 * 60, // 7 days in seconds
+        retries: 0
+    }),
+    secret: 'mnemosyne-secret-key-1337',
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+        secure: false,
+        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+    }
+}));
 
-app.get('/', (req, res) => {
-    res.send('<h1>Scraper is Online</h1><p>Usage: <code>/scrape</code>, <code>/agent</code>, <code>/headful</code>, or visit <code>/test</code> for UI.</p>');
+// Auth Middleware
+const requireAuth = (req, res, next) => {
+    console.log(`[AUTH] Path: ${req.path}, Session: ${req.session.user ? 'YES' : 'NO'}`);
+    if (req.session.user) {
+        next();
+    } else {
+        if (req.xhr || req.path.startsWith('/api/')) {
+            res.status(401).json({ error: 'UNAUTHORIZED' });
+        } else {
+            res.redirect('/login');
+        }
+    }
+};
+
+const requireApiKey = (req, res, next) => {
+    const headerKey = req.get('x-api-key') || req.get('key');
+    const authHeader = req.get('authorization');
+    const bearerKey = authHeader ? authHeader.replace(/^Bearer\s+/i, '') : '';
+    const bodyKey = typeof req.body === 'string' ? req.body : null;
+    const providedKey =
+        headerKey ||
+        bearerKey ||
+        req.query.apiKey ||
+        req.query.key ||
+        (req.body && (req.body.apiKey || req.body.key)) ||
+        bodyKey;
+    const storedKey = loadApiKey();
+
+    if (!storedKey) {
+        return res.status(403).json({ error: 'API_KEY_NOT_SET' });
+    }
+    if (!providedKey || providedKey !== storedKey) {
+        return res.status(401).json({ error: 'INVALID_API_KEY' });
+    }
+    next();
+};
+
+// --- AUTH API ---
+app.get('/api/auth/check-setup', (req, res) => {
+    console.log("DEBUG: Hit check-setup");
+    try {
+        const users = loadUsers();
+        console.log("DEBUG: check-setup users length:", users.length);
+        res.json({ setupRequired: users.length === 0 });
+    } catch (e) {
+        console.error("DEBUG: check-setup error", e);
+        res.status(500).json({ error: e.message });
+    }
 });
 
-app.get('/test', (req, res) => {
-    res.sendFile(__dirname + '/public/index.html');
+app.post('/api/auth/setup', async (req, res) => {
+    const users = loadUsers();
+    if (users.length > 0) return res.status(403).json({ error: 'ALREADY_SETUP' });
+    const { name, email, password } = req.body;
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    if (!name || !normalizedEmail || !password) return res.status(400).json({ error: 'MISSING_FIELDS' });
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const newUser = { id: Date.now(), name, email: normalizedEmail, password: hashedPassword };
+    saveUsers([newUser]);
+    req.session.user = { id: newUser.id, name: newUser.name, email: newUser.email };
+    res.json({ success: true });
 });
 
-app.get('/scraper/test', (req, res) => {
-    res.sendFile(__dirname + '/public/index.html');
+app.post('/api/auth/login', async (req, res) => {
+    const { email, password } = req.body;
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    const users = loadUsers();
+    const user = users.find(u => String(u.email || '').toLowerCase() === normalizedEmail);
+    if (user && await bcrypt.compare(password, user.password)) {
+        req.session.user = { id: user.id, name: user.name, email: user.email };
+        res.json({ success: true });
+    } else {
+        res.status(401).json({ error: 'INVALID' });
+    }
 });
 
-app.get('/agent/test', (req, res) => {
-    res.sendFile(__dirname + '/public/index.html');
+app.post('/api/auth/logout', (req, res) => {
+    req.session.destroy(() => {
+        res.clearCookie('connect.sid');
+        res.json({ success: true });
+    });
 });
 
-app.get('/headful/test', (req, res) => {
-    res.sendFile(__dirname + '/public/index.html');
+app.get('/api/auth/me', (req, res) => {
+    res.json(req.session.user ? { authenticated: true, user: req.session.user } : { authenticated: false });
 });
 
-app.get('/headful', (req, res) => {
-    // If it's a GET request from a browser (no JSON header or specific flag), show UI
-    // Otherwise, it might be an API call. 
-    // To be safe, let's just make direct /headful GET return the UI.
-    res.sendFile(__dirname + '/public/index.html');
+
+app.post('/api/clear-screenshots', requireAuth, (req, res) => {
+    const screenshotsDir = path.join(__dirname, 'public', 'screenshots');
+    if (fs.existsSync(screenshotsDir)) {
+        for (const entry of fs.readdirSync(screenshotsDir)) {
+            const entryPath = path.join(screenshotsDir, entry);
+            if (fs.statSync(entryPath).isFile()) {
+                fs.unlinkSync(entryPath);
+            }
+        }
+    }
+    res.json({ success: true });
 });
 
-// Scraping endpoint
-app.all('/scrape', handleScrape);
-app.all('/scraper', handleScrape);
+app.post('/api/clear-cookies', requireAuth, (req, res) => {
+    if (fs.existsSync(STORAGE_STATE_PATH)) {
+        fs.unlinkSync(STORAGE_STATE_PATH);
+    }
+    res.json({ success: true });
+});
 
-// Agent endpoint
-app.all('/agent', handleAgent);
+// --- TASKS API ---
+app.get('/api/tasks', requireAuth, (req, res) => {
+    res.json(loadTasks());
+});
 
-// Headful login endpoint (Execution triggered by POST)
-app.post('/headful', handleHeadful);
+app.post('/api/tasks', requireAuth, (req, res) => {
+    const tasks = loadTasks();
+    const newTask = req.body;
+    if (!newTask.id) newTask.id = 'task_' + Date.now();
+
+    const index = tasks.findIndex(t => t.id === newTask.id);
+    if (index > -1) {
+        appendTaskVersion(tasks[index]);
+        newTask.versions = tasks[index].versions || [];
+        tasks[index] = newTask;
+    } else {
+        newTask.versions = [];
+        tasks.push(newTask);
+    }
+
+    saveTasks(tasks);
+    res.json(newTask);
+});
+
+app.post('/api/tasks/:id/touch', requireAuth, (req, res) => {
+    const tasks = loadTasks();
+    const index = tasks.findIndex(t => t.id === req.params.id);
+    if (index === -1) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
+    tasks[index].last_opened = Date.now();
+    saveTasks(tasks);
+    res.json(tasks[index]);
+});
+
+app.delete('/api/tasks/:id', requireAuth, (req, res) => {
+    let tasks = loadTasks();
+    tasks = tasks.filter(t => t.id !== req.params.id);
+    saveTasks(tasks);
+    res.json({ success: true });
+});
+
+app.get('/api/executions', requireAuth, (req, res) => {
+    const executions = loadExecutions();
+    res.json({ executions });
+});
+
+app.post('/api/executions/clear', requireAuth, (req, res) => {
+    saveExecutions([]);
+    res.json({ success: true });
+});
+
+app.delete('/api/executions/:id', requireAuth, (req, res) => {
+    const id = req.params.id;
+    const executions = loadExecutions().filter(e => e.id !== id);
+    saveExecutions(executions);
+    res.json({ success: true });
+});
+
+app.get('/api/tasks/:id/versions', requireAuth, (req, res) => {
+    const tasks = loadTasks();
+    const task = tasks.find(t => t.id === req.params.id);
+    if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
+    const versions = (task.versions || []).map(v => ({
+        id: v.id,
+        timestamp: v.timestamp,
+        name: v.snapshot?.name || task.name,
+        mode: v.snapshot?.mode || task.mode
+    }));
+    res.json({ versions });
+});
+
+app.post('/api/tasks/:id/versions/clear', requireAuth, (req, res) => {
+    const tasks = loadTasks();
+    const index = tasks.findIndex(t => t.id === req.params.id);
+    if (index === -1) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
+    tasks[index].versions = [];
+    saveTasks(tasks);
+    res.json({ success: true });
+});
+
+app.post('/api/tasks/:id/rollback', requireAuth, (req, res) => {
+    const { versionId } = req.body || {};
+    if (!versionId) return res.status(400).json({ error: 'MISSING_VERSION_ID' });
+    const tasks = loadTasks();
+    const index = tasks.findIndex(t => t.id === req.params.id);
+    if (index === -1) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
+    const task = tasks[index];
+    const versions = task.versions || [];
+    const version = versions.find(v => v.id === versionId);
+    if (!version || !version.snapshot) return res.status(404).json({ error: 'VERSION_NOT_FOUND' });
+
+    appendTaskVersion(task);
+    const restored = { ...cloneTaskForVersion(version.snapshot), id: task.id, versions: task.versions };
+    restored.last_opened = Date.now();
+    tasks[index] = restored;
+    saveTasks(tasks);
+    res.json(restored);
+});
+
+app.get('/api/data/screenshots', requireAuth, (req, res) => {
+    const screenshotsDir = path.join(__dirname, 'public', 'screenshots');
+    if (!fs.existsSync(screenshotsDir)) return res.json({ screenshots: [] });
+    const entries = fs.readdirSync(screenshotsDir)
+        .filter(name => name.toLowerCase().endsWith('.png'))
+        .map((name) => {
+            const fullPath = path.join(screenshotsDir, name);
+            const stat = fs.statSync(fullPath);
+            return {
+                name,
+                url: `/screenshots/${name}`,
+                size: stat.size,
+                modified: stat.mtimeMs
+            };
+        })
+        .sort((a, b) => b.modified - a.modified);
+    res.json({ screenshots: entries });
+});
+
+app.delete('/api/data/screenshots/:name', requireAuth, (req, res) => {
+    const name = req.params.name;
+    if (name.includes('..') || name.includes('/') || name.includes('\\')) {
+        return res.status(400).json({ error: 'INVALID_NAME' });
+    }
+    const targetPath = path.join(__dirname, 'public', 'screenshots', name);
+    if (fs.existsSync(targetPath)) {
+        fs.unlinkSync(targetPath);
+    }
+    res.json({ success: true });
+});
+
+app.get('/api/data/cookies', requireAuth, (req, res) => {
+    if (!fs.existsSync(STORAGE_STATE_PATH)) return res.json({ cookies: [], origins: [] });
+    try {
+        const data = JSON.parse(fs.readFileSync(STORAGE_STATE_PATH, 'utf8'));
+        res.json({
+            cookies: Array.isArray(data.cookies) ? data.cookies : [],
+            origins: Array.isArray(data.origins) ? data.origins : []
+        });
+    } catch (e) {
+        res.json({ cookies: [], origins: [] });
+    }
+});
+
+app.post('/api/data/cookies/delete', requireAuth, (req, res) => {
+    const { name, domain, path: cookiePath } = req.body || {};
+    if (!name) return res.status(400).json({ error: 'MISSING_NAME' });
+    if (!fs.existsSync(STORAGE_STATE_PATH)) return res.json({ success: true });
+    try {
+        const data = JSON.parse(fs.readFileSync(STORAGE_STATE_PATH, 'utf8'));
+        const cookies = Array.isArray(data.cookies) ? data.cookies : [];
+        const filtered = cookies.filter((cookie) => {
+            if (cookie.name !== name) return true;
+            if (domain && cookie.domain !== domain) return true;
+            if (cookiePath && cookie.path !== cookiePath) return true;
+            return false;
+        });
+        data.cookies = filtered;
+        fs.writeFileSync(STORAGE_STATE_PATH, JSON.stringify(data, null, 2));
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: 'DELETE_FAILED' });
+    }
+});
+
+// --- TASK API EXECUTION ---
+app.post('/tasks/:id/api', requireApiKey, async (req, res) => {
+    const tasks = loadTasks();
+    const task = tasks.find(t => String(t.id) === String(req.params.id));
+    if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
+
+    const normalizeVariables = (vars) => {
+        const normalized = {};
+        if (!vars || typeof vars !== 'object') return normalized;
+        for (const [key, value] of Object.entries(vars)) {
+            if (value && typeof value === 'object' && 'value' in value) {
+                normalized[key] = value.value;
+            } else {
+                normalized[key] = value;
+            }
+        }
+        return normalized;
+    };
+
+    const baseVars = normalizeVariables(task.variables);
+    const overrideVars = normalizeVariables(req.body.variables || req.body.taskVariables || {});
+    const mergedVars = { ...baseVars, ...overrideVars };
+
+    const resolveTemplate = (input) => {
+        if (typeof input !== 'string') return input;
+        return input.replace(/\{\$(\w+)\}/g, (_match, name) => {
+            if (name === 'now') return new Date().toISOString();
+            const value = mergedVars[name];
+            if (value === undefined || value === null || value === '') return '';
+            return String(value);
+        });
+    };
+
+    const resolvedTask = {
+        ...task,
+        url: resolveTemplate(task.url || ''),
+        selector: resolveTemplate(task.selector),
+        extractionScript: resolveTemplate(task.extractionScript || ''),
+        actions: Array.isArray(task.actions)
+            ? task.actions.map((action) => ({
+                ...action,
+                selector: resolveTemplate(action.selector),
+                value: resolveTemplate(action.value),
+                key: resolveTemplate(action.key)
+            }))
+            : []
+    };
+
+    req.body = {
+        ...resolvedTask,
+        taskVariables: mergedVars,
+        variables: mergedVars,
+        runSource: 'api',
+        taskId: task.id,
+        taskName: task.name
+    };
+
+    const mode = resolvedTask.mode || 'scrape';
+    registerExecution(req, res, { source: 'api', mode, taskId: task.id, taskName: task.name });
+    if (mode === 'scrape') return handleScrape(req, res);
+    if (mode === 'agent') return handleAgent(req, res);
+    if (mode === 'headful') return handleHeadful(req, res);
+    return res.status(400).json({ error: 'UNSUPPORTED_MODE' });
+});
+
+// --- ROUTES ---
+// Login page
+app.get('/login', (req, res) => {
+    // Check if already logged in
+    if (req.session.user) {
+        return res.redirect('/');
+    }
+    // Check if setup is needed
+    const users = loadUsers();
+    if (users.length === 0) {
+        return res.redirect('/signup');
+    }
+    res.sendFile(path.join(DIST_DIR, 'index.html'));
+});
+
+// Signup/setup page
+app.get('/signup', (req, res) => {
+    const users = loadUsers();
+    if (users.length > 0) {
+        return res.redirect('/login');
+    }
+    res.sendFile(path.join(DIST_DIR, 'index.html'));
+});
+
+// Dashboard (home)
+app.get('/', requireAuth, (req, res) => {
+    res.sendFile(path.join(DIST_DIR, 'index.html'));
+});
+
+// Dashboard alias
+app.get('/dashboard', requireAuth, (req, res) => {
+    res.sendFile(path.join(DIST_DIR, 'index.html'));
+});
+
+// Task editor - new task
+app.get('/tasks/new', requireAuth, (req, res) => {
+    res.sendFile(path.join(DIST_DIR, 'index.html'));
+});
+
+// Task editor - existing task
+app.get('/tasks/:id', requireAuth, (req, res) => {
+    console.log(`[ROUTE] /tasks/:id matched with id: ${req.params.id}`);
+    res.sendFile(path.join(DIST_DIR, 'index.html'));
+});
+
+// Settings
+app.get('/settings', requireAuth, (req, res) => {
+    res.sendFile(path.join(DIST_DIR, 'index.html'));
+});
+
+// Execution endpoints
+app.all('/scrape', requireAuth, (req, res) => {
+    registerExecution(req, res, { mode: 'scrape' });
+    return handleScrape(req, res);
+});
+app.all('/scraper', requireAuth, (req, res) => {
+    registerExecution(req, res, { mode: 'scrape' });
+    return handleScrape(req, res);
+});
+app.all('/agent', requireAuth, (req, res) => {
+    registerExecution(req, res, { mode: 'agent' });
+    return handleAgent(req, res);
+});
+app.post('/headful', requireAuth, (req, res) => {
+    registerExecution(req, res, { mode: 'headful' });
+    return handleHeadful(req, res);
+});
+app.post('/headful/stop', requireAuth, stopHeadful);
+
+// Ensure public/screenshots directory exists
+const screenshotsDir = path.join(__dirname, 'public', 'screenshots');
+if (!fs.existsSync(screenshotsDir)) {
+    fs.mkdirSync(screenshotsDir, { recursive: true });
+}
+
+app.use('/screenshots', express.static(screenshotsDir));
+app.use(express.static(DIST_DIR));
 
 app.listen(port, '0.0.0.0', () => {
-    console.log(`Scraper server running at http://0.0.0.0:${port}`);
+    console.log(`Doppelgänger Station Running at http://0.0.0.0:${port}`);
 });

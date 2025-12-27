@@ -1,4 +1,5 @@
 const { chromium } = require('playwright');
+const { JSDOM } = require('jsdom');
 const fs = require('fs');
 const path = require('path');
 
@@ -17,6 +18,8 @@ async function handleScrape(req, res) {
     const waitInput = req.body.wait || req.query.wait;
     const waitTime = waitInput ? parseFloat(waitInput) * 1000 : 2000;
     const rotateUserAgents = req.body.rotateUserAgents || req.query.rotateUserAgents || false;
+    const includeShadowDom = true;
+    const extractionScript = req.body.extractionScript || req.query.extractionScript;
 
     if (!url) {
         return res.status(400).json({ error: 'URL is required.' });
@@ -91,26 +94,169 @@ async function handleScrape(req, res) {
         let usedFallback = false;
 
         if (userSelector) {
-            productHtml = await page.$$eval(userSelector, (elements) => {
-                return elements.map(el => {
-                    const useless = el.querySelectorAll('script, style, svg, link, noscript');
-                    useless.forEach(node => node.remove());
-                    return el.outerHTML;
-                }).join('\n');
-            });
+            if (includeShadowDom) {
+                productHtml = await page.evaluate((selector) => {
+                    const stripUseless = (root) => {
+                        const useless = root.querySelectorAll('script, style, svg, link, noscript');
+                        useless.forEach(node => node.remove());
+                    };
+
+                    const cloneWithShadow = (root) => {
+                        const clone = root.cloneNode(true);
+                        const walkerOrig = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+                        const walkerClone = document.createTreeWalker(clone, NodeFilter.SHOW_ELEMENT);
+
+                        while (walkerOrig.nextNode() && walkerClone.nextNode()) {
+                            const orig = walkerOrig.currentNode;
+                            const cloned = walkerClone.currentNode;
+                            if (orig.shadowRoot) {
+                                const template = document.createElement('template');
+                                template.setAttribute('data-shadowroot', 'open');
+                                template.innerHTML = orig.shadowRoot.innerHTML;
+                                cloned.appendChild(template);
+                            }
+                        }
+
+                        stripUseless(clone);
+                        return clone;
+                    };
+
+                    const elements = Array.from(document.querySelectorAll(selector));
+                    return elements.map(el => cloneWithShadow(el).outerHTML).join('\n');
+                }, userSelector);
+            } else {
+                productHtml = await page.$$eval(userSelector, (elements) => {
+                    return elements.map(el => {
+                        const useless = el.querySelectorAll('script, style, svg, link, noscript');
+                        useless.forEach(node => node.remove());
+                        return el.outerHTML;
+                    }).join('\n');
+                });
+            }
             if (!productHtml || productHtml.trim() === '') usedFallback = true;
         } else {
             usedFallback = true;
         }
 
         if (usedFallback) {
-            productHtml = await page.evaluate(() => {
+            productHtml = await page.evaluate((withShadow) => {
+                const stripUseless = (root) => {
+                    const useless = root.querySelectorAll('script, style, svg, link, noscript');
+                    useless.forEach(node => node.remove());
+                };
+
+                const cloneWithShadow = (root) => {
+                    const clone = root.cloneNode(true);
+                    const walkerOrig = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+                    const walkerClone = document.createTreeWalker(clone, NodeFilter.SHOW_ELEMENT);
+
+                    while (walkerOrig.nextNode() && walkerClone.nextNode()) {
+                        const orig = walkerOrig.currentNode;
+                        const cloned = walkerClone.currentNode;
+                        if (orig.shadowRoot) {
+                            const template = document.createElement('template');
+                            template.setAttribute('data-shadowroot', 'open');
+                            template.innerHTML = orig.shadowRoot.innerHTML;
+                            cloned.appendChild(template);
+                        }
+                    }
+
+                    stripUseless(clone);
+                    return clone;
+                };
+
+                if (withShadow) {
+                    return cloneWithShadow(document.body).innerHTML;
+                }
+
                 const body = document.body.cloneNode(true);
-                const useless = body.querySelectorAll('script, style, svg, link, noscript');
-                useless.forEach(node => node.remove());
+                stripUseless(body);
                 return body.innerHTML;
-            });
+            }, includeShadowDom);
         }
+
+        const runExtractionScript = async (script, html) => {
+            if (!script || typeof script !== 'string') return { result: undefined, logs: [] };
+            try {
+                const dom = new JSDOM(html || '');
+                const { window } = dom;
+                const logBuffer = [];
+                const consoleProxy = {
+                    log: (...args) => logBuffer.push(args.join(' ')),
+                    warn: (...args) => logBuffer.push(args.join(' ')),
+                    error: (...args) => logBuffer.push(args.join(' '))
+                };
+                const shadowHelpers = (() => {
+                    const shadowQueryAll = (selector, root = window.document) => {
+                        const results = [];
+                        const walk = (node) => {
+                            if (!node) return;
+                            if (node.nodeType === 1) {
+                                const el = node;
+                                if (selector && el.matches && el.matches(selector)) results.push(el);
+                                if (el.tagName === 'TEMPLATE' && el.hasAttribute('data-shadowroot')) {
+                                    walk(el.content);
+                                }
+                            } else if (node.nodeType === 11) {
+                                // DocumentFragment
+                            }
+                            if (node.childNodes) {
+                                node.childNodes.forEach((child) => walk(child));
+                            }
+                        };
+                        walk(root);
+                        return results;
+                    };
+
+                    const shadowText = (root = window.document) => {
+                        const texts = [];
+                        const walk = (node) => {
+                            if (!node) return;
+                            if (node.nodeType === 3) {
+                                const text = node.nodeValue ? node.nodeValue.trim() : '';
+                                if (text) texts.push(text);
+                                return;
+                            }
+                            if (node.nodeType === 1) {
+                                const el = node;
+                                if (el.tagName === 'TEMPLATE' && el.hasAttribute('data-shadowroot')) {
+                                    walk(el.content);
+                                }
+                            }
+                            if (node.childNodes) {
+                                node.childNodes.forEach((child) => walk(child));
+                            }
+                        };
+                        walk(root);
+                        return texts;
+                    };
+
+                    return { shadowQueryAll, shadowText };
+                })();
+
+                const executor = new Function(
+                    '$$data',
+                    'window',
+                    'document',
+                    'DOMParser',
+                    'console',
+                    `"use strict"; return (async () => { ${script}\n})();`
+                );
+                const $$data = {
+                    html: () => html || '',
+                    window,
+                    document: window.document,
+                    shadowQueryAll: includeShadowDom ? shadowHelpers.shadowQueryAll : undefined,
+                    shadowText: includeShadowDom ? shadowHelpers.shadowText : undefined
+                };
+                const result = await executor($$data, window, window.document, window.DOMParser, consoleProxy);
+                return { result, logs: logBuffer };
+            } catch (e) {
+                return { result: `Extraction script error: ${e.message}`, logs: [] };
+            }
+        };
+
+        const extraction = await runExtractionScript(extractionScript, productHtml);
 
         // Ensure the public/screenshots directory exists
         const screenshotsDir = path.join(__dirname, 'public', 'screenshots');
@@ -141,6 +287,7 @@ async function handleScrape(req, res) {
             title: await page.title(),
             url: page.url(),
             html: formatHTML(productHtml),
+            data: extraction.result !== undefined ? extraction.result : (extraction.logs.length ? extraction.logs.join('\n') : undefined),
             is_partial: !usedFallback,
             selector_used: usedFallback ? (userSelector ? `${userSelector} (not found, using body)` : 'body (default)') : userSelector,
             links: await page.$$eval('a[href]', elements => {

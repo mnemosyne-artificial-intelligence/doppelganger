@@ -206,6 +206,11 @@ const requireAuth = (req, res, next) => {
     }
 };
 
+const requireAuthForSettings = (req, res, next) => {
+    if (process.env.NODE_ENV !== 'production') return next();
+    return requireAuth(req, res, next);
+};
+
 const requireApiKey = (req, res, next) => {
     const headerKey = req.get('x-api-key') || req.get('key');
     const authHeader = req.get('authorization');
@@ -278,6 +283,29 @@ app.post('/api/auth/logout', (req, res) => {
 
 app.get('/api/auth/me', (req, res) => {
     res.json(req.session.user ? { authenticated: true, user: req.session.user } : { authenticated: false });
+});
+
+// --- SETTINGS API ---
+app.get('/api/settings/api-key', requireAuthForSettings, (req, res) => {
+    try {
+        const apiKey = loadApiKey();
+        res.json({ apiKey: apiKey || null });
+    } catch (e) {
+        console.error('[API_KEY] Load failed:', e);
+        res.status(500).json({ error: 'API_KEY_LOAD_FAILED' });
+    }
+});
+
+app.post('/api/settings/api-key', requireAuthForSettings, (req, res) => {
+    try {
+        const bodyKey = req.body && typeof req.body.apiKey === 'string' ? req.body.apiKey.trim() : '';
+        const apiKey = bodyKey || generateApiKey();
+        saveApiKey(apiKey);
+        res.json({ apiKey });
+    } catch (e) {
+        console.error('[API_KEY] Save failed:', e);
+        res.status(500).json({ error: 'API_KEY_SAVE_FAILED', message: e.message });
+    }
 });
 
 

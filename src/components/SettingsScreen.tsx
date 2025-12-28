@@ -18,6 +18,9 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({
     const [cookieOrigins, setCookieOrigins] = useState<any[]>([]);
     const [dataLoading, setDataLoading] = useState(false);
     const [expandedCookies, setExpandedCookies] = useState<Record<string, boolean>>({});
+    const [apiKey, setApiKey] = useState<string | null>(null);
+    const [apiKeyLoading, setApiKeyLoading] = useState(false);
+    const [apiKeySaving, setApiKeySaving] = useState(false);
 
     const loadData = async () => {
         setDataLoading(true);
@@ -77,8 +80,72 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({
         setExpandedCookies((prev) => ({ ...prev, [key]: !prev[key] }));
     };
 
+    const loadApiKey = async () => {
+        setApiKeyLoading(true);
+        try {
+            const res = await fetch('/api/settings/api-key', { credentials: 'include' });
+            if (!res.ok) {
+                if (res.status === 401) {
+                    onNotify('Session expired. Please log in again.', 'error');
+                }
+                setApiKey(null);
+                return;
+            }
+            const data = await res.json();
+            setApiKey(data.apiKey || null);
+        } catch {
+            setApiKey(null);
+        } finally {
+            setApiKeyLoading(false);
+        }
+    };
+
+    const regenerateApiKey = async () => {
+        setApiKeySaving(true);
+        try {
+            const res = await fetch('/api/settings/api-key', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include'
+            });
+            if (!res.ok) {
+                let detail = '';
+                try {
+                    const data = await res.json();
+                    detail = data?.error || data?.message || '';
+                } catch {
+                    detail = '';
+                }
+                if (res.status === 401) {
+                    onNotify('Session expired. Please log in again.', 'error');
+                } else {
+                    onNotify(`Failed to generate API key${detail ? `: ${detail}` : ''}.`, 'error');
+                }
+                return;
+            }
+            const data = await res.json();
+            setApiKey(data.apiKey || null);
+            onNotify('API key generated.', 'success');
+        } catch {
+            onNotify('Failed to generate API key.', 'error');
+        } finally {
+            setApiKeySaving(false);
+        }
+    };
+
+    const copyApiKey = async () => {
+        if (!apiKey) return;
+        try {
+            await navigator.clipboard.writeText(apiKey);
+            onNotify('API key copied.', 'success');
+        } catch {
+            onNotify('Copy failed.', 'error');
+        }
+    };
+
     useEffect(() => {
         if (tab === 'data') loadData();
+        if (tab === 'system') loadApiKey();
     }, [tab]);
 
     return (
@@ -104,6 +171,39 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
                 {tab === 'system' && (
                     <>
+                        <div className="glass-card p-8 rounded-[40px] space-y-6">
+                            <div className="flex items-center gap-4 mb-2">
+                                <div className="w-10 h-10 rounded-2xl bg-white/5 flex items-center justify-center text-gray-400"><Database className="w-5 h-5" /></div>
+                                <div>
+                                    <h3 className="text-sm font-bold text-white uppercase tracking-widest">API Key</h3>
+                                    <p className="text-[10px] text-gray-500 uppercase tracking-widest mt-1">Manage task API access</p>
+                                </div>
+                            </div>
+                            <div className="flex flex-col gap-4">
+                                <div className="rounded-2xl bg-black/40 border border-white/10 px-4 py-3 font-mono text-[10px] text-blue-200/80 break-all min-h-[44px]">
+                                    {apiKeyLoading ? 'Loading...' : (apiKey || 'No API key set')}
+                                </div>
+                                <div className="flex gap-3">
+                                    <button
+                                        onClick={regenerateApiKey}
+                                        disabled={apiKeySaving}
+                                        className="flex-1 px-6 py-3 rounded-2xl text-[9px] font-bold uppercase tracking-widest bg-white text-black hover:scale-105 transition-all disabled:opacity-60 disabled:hover:scale-100"
+                                    >
+                                        {apiKey ? 'Rotate Key' : 'Generate Key'}
+                                    </button>
+                                    <button
+                                        onClick={copyApiKey}
+                                        disabled={!apiKey}
+                                        className="flex-1 px-6 py-3 rounded-2xl text-[9px] font-bold uppercase tracking-widest border border-white/10 text-white hover:bg-white/5 transition-all disabled:opacity-50"
+                                    >
+                                        Copy Key
+                                    </button>
+                                </div>
+                                <p className="text-[9px] text-gray-600 uppercase tracking-widest">
+                                    Use this key in `key`, `x-api-key`, or `Authorization: Bearer` headers.
+                                </p>
+                            </div>
+                        </div>
                         <div className="glass-card p-8 rounded-[40px] space-y-6">
                             <div className="flex items-center gap-4 mb-2">
                                 <div className="w-10 h-10 rounded-2xl bg-white/5 flex items-center justify-center text-gray-400"><Trash2 className="w-5 h-5" /></div>

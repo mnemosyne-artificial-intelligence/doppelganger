@@ -12,13 +12,13 @@ export default defineConfig({
     server: {
         port: 11345,
         proxy: {
-            '/api': 'http://localhost:11346',
-            '/scrape': 'http://localhost:11346',
-            '/scraper': 'http://localhost:11346',
-            '/agent': 'http://localhost:11346',
-            '/headful': 'http://localhost:11346',
-            '/tasks': 'http://localhost:11346',
-            '/screenshots': 'http://localhost:11346',
+            '/api': 'http://localhost:11345',
+            '/scrape': 'http://localhost:11345',
+            '/scraper': 'http://localhost:11345',
+            '/agent': 'http://localhost:11345',
+            '/headful': 'http://localhost:11345',
+            '/tasks': 'http://localhost:11345',
+            '/screenshots': 'http://localhost:11345',
         },
     },
     build: {

@@ -53,6 +53,26 @@ export default function App() {
     };
     const formatLabel = (value: string) => value ? value[0].toUpperCase() + value.slice(1) : value;
 
+    const makeDefaultTask = () => ({
+        name: "Imported Task",
+        url: "",
+        mode: "scrape",
+        wait: 3,
+        selector: "",
+        rotateUserAgents: false,
+        humanTyping: false,
+        stealth: {
+            allowTypos: false,
+            idleMovements: false,
+            overscroll: false,
+            deadClicks: false,
+            fatigue: false,
+            naturalTyping: false
+        },
+        actions: [],
+        variables: {}
+    } as Task);
+
 
     useEffect(() => {
         checkAuth();
@@ -320,6 +340,78 @@ export default function App() {
         showAlert(`${formatLabel(type)} cleared.`, 'success');
     };
 
+    const exportTasks = () => {
+        const payload = {
+            exportedAt: new Date().toISOString(),
+            tasks
+        };
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        const stamp = new Date().toISOString().slice(0, 10);
+        link.href = url;
+        link.download = `doppelganger-tasks-${stamp}.json`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+        showAlert('Tasks exported.', 'success');
+    };
+
+    const normalizeImportedTask = (raw: any, index: number): Task | null => {
+        if (!raw || typeof raw !== 'object') return null;
+        const base = makeDefaultTask();
+        const merged: Task = { ...base, ...raw };
+        if (!merged.name || typeof merged.name !== 'string') {
+            merged.name = `Imported Task ${index + 1}`;
+        }
+        if (!merged.mode || !['scrape', 'agent', 'headful'].includes(merged.mode)) {
+            merged.mode = 'scrape';
+        }
+        if (typeof merged.wait !== 'number') merged.wait = 3;
+        if (!merged.stealth) merged.stealth = base.stealth;
+        if (!merged.variables || Array.isArray(merged.variables)) merged.variables = {};
+        if (!Array.isArray(merged.actions)) merged.actions = [];
+        delete merged.versions;
+        delete merged.last_opened;
+        delete merged.id;
+        return merged;
+    };
+
+    const importTasks = async (file: File) => {
+        try {
+            const text = await file.text();
+            const parsed = JSON.parse(text);
+            const list = Array.isArray(parsed) ? parsed : parsed?.tasks;
+            if (!Array.isArray(list)) {
+                showAlert('Invalid import file.', 'error');
+                return;
+            }
+            const stamp = Date.now();
+            const prepared = list
+                .map((raw, index) => normalizeImportedTask(raw, index))
+                .filter((task): task is Task => !!task)
+                .map((task, index) => ({ ...task, id: `task_${stamp}_${index}` }));
+
+            if (prepared.length === 0) {
+                showAlert('No tasks to import.', 'error');
+                return;
+            }
+
+            await Promise.all(prepared.map((task) => (
+                fetch('/api/tasks', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(task)
+                })
+            )));
+            await loadTasks();
+            showAlert(`Imported ${prepared.length} task(s).`, 'success');
+        } catch (e: any) {
+            showAlert(`Import failed: ${e.message || 'Unknown error'}`, 'error');
+        }
+    };
+
     const getCurrentScreen = () => {
         if (location.pathname.startsWith('/tasks')) return 'editor';
         if (location.pathname === '/settings') return 'settings';
@@ -350,8 +442,8 @@ export default function App() {
                 />
 
                 <Routes>
-                    <Route path="/" element={<DashboardScreen tasks={tasks} onNewTask={createNewTask} onEditTask={editTask} onDeleteTask={deleteTask} />} />
-                    <Route path="/dashboard" element={<DashboardScreen tasks={tasks} onNewTask={createNewTask} onEditTask={editTask} onDeleteTask={deleteTask} />} />
+                    <Route path="/" element={<DashboardScreen tasks={tasks} onNewTask={createNewTask} onEditTask={editTask} onDeleteTask={deleteTask} onExportTasks={exportTasks} onImportTasks={importTasks} />} />
+                    <Route path="/dashboard" element={<DashboardScreen tasks={tasks} onNewTask={createNewTask} onEditTask={editTask} onDeleteTask={deleteTask} onExportTasks={exportTasks} onImportTasks={importTasks} />} />
                     <Route path="/tasks/new" element={
                         currentTask ? (
                         <EditorScreen

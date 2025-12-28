@@ -1,4 +1,5 @@
-import { X, Globe } from 'lucide-react';
+import { X, Globe, Download, Upload } from 'lucide-react';
+import { useRef } from 'react';
 import { Task } from '../types';
 
 interface DashboardScreenProps {
@@ -6,9 +7,12 @@ interface DashboardScreenProps {
     onNewTask: () => void;
     onEditTask: (task: Task) => void;
     onDeleteTask: (id: string) => void;
+    onExportTasks: () => void;
+    onImportTasks: (file: File) => void;
 }
 
-const DashboardScreen: React.FC<DashboardScreenProps> = ({ tasks, onNewTask, onEditTask, onDeleteTask }) => {
+const DashboardScreen: React.FC<DashboardScreenProps> = ({ tasks, onNewTask, onEditTask, onDeleteTask, onExportTasks, onImportTasks }) => {
+    const fileInputRef = useRef<HTMLInputElement | null>(null);
     const getFavicon = (url: string) => {
         try {
             if (!url) return null;
@@ -19,6 +23,18 @@ const DashboardScreen: React.FC<DashboardScreenProps> = ({ tasks, onNewTask, onE
         }
     };
 
+    const handleImportClick = () => {
+        fileInputRef.current?.click();
+    };
+
+    const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (file) {
+            onImportTasks(file);
+        }
+        event.target.value = '';
+    };
+
     return (
         <div className="flex-1 overflow-hidden animate-in fade-in duration-500">
             <div className="h-full flex flex-col px-12 py-12 max-w-7xl mx-auto space-y-12 w-full">
@@ -27,12 +43,35 @@ const DashboardScreen: React.FC<DashboardScreenProps> = ({ tasks, onNewTask, onE
                         <p className="text-[10px] font-bold text-blue-500 uppercase tracking-[0.4em]">Status</p>
                         <h2 className="text-4xl font-bold tracking-tighter text-white">Dashboard</h2>
                     </div>
-                    <button
-                        onClick={onNewTask}
-                        className="shine-effect bg-white text-black px-8 py-3 rounded-2xl font-bold text-[10px] tracking-[0.2em] uppercase transition-all hover:scale-105 active:scale-95"
-                    >
-                        + New Task
-                    </button>
+                    <div className="flex items-center gap-3">
+                        <button
+                            onClick={onExportTasks}
+                            className="px-4 py-3 rounded-2xl border border-white/10 text-white text-[9px] font-bold uppercase tracking-[0.3em] hover:bg-white/5 transition-all"
+                        >
+                            <Download className="w-4 h-4 inline-block mr-2" />
+                            Export
+                        </button>
+                        <button
+                            onClick={handleImportClick}
+                            className="px-4 py-3 rounded-2xl border border-white/10 text-white text-[9px] font-bold uppercase tracking-[0.3em] hover:bg-white/5 transition-all"
+                        >
+                            <Upload className="w-4 h-4 inline-block mr-2" />
+                            Import
+                        </button>
+                        <button
+                            onClick={onNewTask}
+                            className="shine-effect bg-white text-black px-8 py-3 rounded-2xl font-bold text-[10px] tracking-[0.2em] uppercase transition-all hover:scale-105 active:scale-95"
+                        >
+                            + New Task
+                        </button>
+                        <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept="application/json"
+                            className="hidden"
+                            onChange={handleFileChange}
+                        />
+                    </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 overflow-y-auto custom-scrollbar pb-12 pr-4">

@@ -24,6 +24,7 @@ docker pull mnemosyneai/doppelganger
 docker run -d \
   --name doppelganger \
   -p 11345:11345 \
+  -e SESSION_SECRET=change_me_to_a_long_random_value \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/public:/app/public \
   -v $(pwd)/storage_state.json:/app/storage_state.json \
@@ -35,6 +36,14 @@ Open the dashboard at:
 http://localhost:11345
 ```
 
+### Session Secret
+Set a strong, unique secret via `SESSION_SECRET` before starting the container.
+
+Example:
+```bash
+export SESSION_SECRET="$(node -e 'console.log(require("crypto").randomBytes(32).toString("hex"))')"
+```
+
 ### Update to Latest
 ```bash
 docker pull mnemosyneai/doppelganger
@@ -43,6 +52,7 @@ docker rm doppelganger
 docker run -d \
   --name doppelganger \
   -p 11345:11345 \
+  -e SESSION_SECRET=change_me_to_a_long_random_value \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/public:/app/public \
   -v $(pwd)/storage_state.json:/app/storage_state.json \
@@ -83,12 +93,6 @@ JavaScript blocks allow custom extraction or page logic. Use them for:
 - Parsing DOM elements
 - Returning structured data
 - Adding custom logic to actions
-
-## AI Features (Optional)
-AI-assisted script generation may be added in the future.
-- You would provide your own API key
-- You would choose the model
-- AI does not execute tasks automatically
 
 ## Community and Presets
 Community-contributed presets or examples may be shared in the future.

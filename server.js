@@ -8,6 +8,11 @@ const path = require('path');
 const app = express();
 const port = process.env.PORT || 11345;
 const DIST_DIR = path.join(__dirname, 'dist');
+const SESSION_SECRET = process.env.SESSION_SECRET;
+
+if (!SESSION_SECRET) {
+    throw new Error('SESSION_SECRET environment variable is required');
+}
 
 const USERS_FILE = path.join(__dirname, 'data', 'users.json');
 
@@ -194,7 +199,7 @@ app.use(session({
         ttl: 7 * 24 * 60 * 60, // 7 days in seconds
         retries: 0
     }),
-    secret: 'mnemosyne-secret-key-1337',
+    secret: SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     cookie: {

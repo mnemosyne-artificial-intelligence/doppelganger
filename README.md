@@ -94,6 +94,23 @@ JavaScript blocks allow custom extraction or page logic. Use them for:
 - Returning structured data
 - Adding custom logic to actions
 
+### Secure API Access
+Tasks can be executed via HTTP requests using the API key. This enables secure, automated access from other services.
+
+Key details:
+- Endpoint: `POST /tasks/:id/api`
+- Auth headers: `x-api-key: <key>` or `Authorization: Bearer <key>`
+- Variables: send `variables` (or `taskVariables`) in the JSON body to override task variables
+- API key: generate or set one in **Settings** → **API Key** (stored locally)
+
+Example:
+```bash
+curl -X POST http://localhost:11345/tasks/task_123/api \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: YOUR_API_KEY" \
+  -d "{\"variables\":{\"query\":\"example.com\"}}"
+```
+
 ## Community and Presets
 Community-contributed presets or examples may be shared in the future.
 - Use community content at your own risk

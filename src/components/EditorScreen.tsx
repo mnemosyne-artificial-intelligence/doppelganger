@@ -3,6 +3,7 @@ import { Play, Copy, Terminal, X, Check, History as HistoryIcon } from 'lucide-r
 import { Task, TaskMode, ViewMode, VarType, Action, Results } from '../types';
 import RichInput from './RichInput';
 import CodeEditor from './CodeEditor';
+import { SyntaxLanguage } from '../utils/syntaxHighlight';
 
 interface EditorScreenProps {
     currentTask: Task;
@@ -139,14 +140,18 @@ const EditorScreen: React.FC<EditorScreenProps> = ({
         }
     };
 
-    const getResultsPreview = (payload: Results | null) => {
+    const getResultsPreview = (payload: Results | null): { text: string; truncated: boolean; language: SyntaxLanguage } => {
         if (!payload || payload.data === undefined || payload.data === null || payload.data === '') {
             return { text: '', truncated: false, language: 'plain' as const };
         }
         const raw = payload.data;
         if (typeof raw === 'string') {
             const trimmed = raw.trim();
-            const language = trimmed.startsWith('<') && trimmed.includes('>') ? 'html' : (trimmed.startsWith('{') || trimmed.startsWith('[')) ? 'json' : 'plain';
+            const language: SyntaxLanguage = trimmed.startsWith('<') && trimmed.includes('>')
+                ? 'html'
+                : (trimmed.startsWith('{') || trimmed.startsWith('['))
+                    ? 'json'
+                    : 'plain';
             const clamped = clampText(raw, MAX_PREVIEW_CHARS);
             return { text: clamped.text, truncated: clamped.truncated, language };
         }

@@ -1,22 +1,53 @@
 import { useState, useEffect, useRef } from 'react';
-import { Play, Copy, Terminal, X, Check, History as HistoryIcon } from 'lucide-react';
+import {
+    Play,
+    Copy,
+    X,
+    Check,
+    History as HistoryIcon,
+    MousePointer2,
+    Type as TypeIcon,
+    Target,
+    Keyboard,
+    Clock,
+    ArrowDownUp,
+    Code,
+    Split,
+    CornerRightDown,
+    Repeat,
+    List,
+    Variable,
+    Layers,
+    Square,
+    AlertTriangle,
+    PlayCircle,
+    Table
+} from 'lucide-react';
 import { Task, TaskMode, ViewMode, VarType, Action, Results, ConfirmRequest } from '../types';
 import RichInput from './RichInput';
 import CodeEditor from './CodeEditor';
-import { SyntaxLanguage } from '../utils/syntaxHighlight';
+import { ACTION_CATALOG } from './editor/actionCatalog';
+import ActionPalette from './editor/ActionPalette';
+import JsonEditorPane from './editor/JsonEditorPane';
+import ResultsPane from './editor/ResultsPane';
 
 interface EditorScreenProps {
     currentTask: Task;
     setCurrentTask: (task: Task) => void;
+    tasks?: Task[];
     editorView: ViewMode;
     setEditorView: (view: ViewMode) => void;
     isExecuting: boolean;
     onSave: () => void;
     onRun: () => void;
     results: Results | null;
+    pinnedResults?: Results | null;
     saveMsg: string;
     onConfirm: (request: string | ConfirmRequest) => Promise<boolean>;
     onNotify: (message: string, tone?: 'success' | 'error') => void;
+    onPinResults?: (results: Results) => void;
+    onUnpinResults?: () => void;
+    onRunSnapshot?: (task: Task) => void;
 }
 
 const VariableRow: React.FC<{
@@ -78,15 +109,20 @@ const VariableRow: React.FC<{
 const EditorScreen: React.FC<EditorScreenProps> = ({
     currentTask,
     setCurrentTask,
+    tasks = [],
     editorView,
     setEditorView,
     isExecuting,
     onSave,
     onRun,
     results,
+    pinnedResults,
     saveMsg,
     onConfirm,
-    onNotify
+    onNotify,
+    onPinResults,
+    onUnpinResults,
+    onRunSnapshot
 }) => {
     const [copied, setCopied] = useState<string | null>(null);
     const [contextMenu, setContextMenu] = useState<{ id: string; x: number; y: number } | null>(null);
@@ -105,124 +141,40 @@ const EditorScreen: React.FC<EditorScreenProps> = ({
     const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
     const [versions, setVersions] = useState<{ id: string; timestamp: number; name: string; mode: TaskMode }[]>([]);
     const [versionsLoading, setVersionsLoading] = useState(false);
+    const [actionPaletteOpen, setActionPaletteOpen] = useState(false);
+    const [actionPaletteQuery, setActionPaletteQuery] = useState('');
+    const [actionPaletteTargetId, setActionPaletteTargetId] = useState<string | null>(null);
+    const [versionPreview, setVersionPreview] = useState<{ id: string; timestamp: number; snapshot: Task } | null>(null);
+    const [versionPreviewLoading, setVersionPreviewLoading] = useState(false);
+    const getStoredSplitPercent = () => {
+        try {
+            const stored = localStorage.getItem('doppelganger.layout.leftWidthPct');
+            if (!stored) return 0.3;
+            const value = parseFloat(stored);
+            if (Number.isNaN(value)) return 0.3;
+            return Math.min(0.75, Math.max(0.25, value));
+        } catch {
+            return 0.3;
+        }
+    };
 
-    const MAX_PREVIEW_CHARS = 60000;
-    const MAX_PREVIEW_ITEMS = 200;
-    const MAX_PREVIEW_KEYS = 200;
+    const clampEditorWidth = (value: number) => {
+        const minWidth = 320;
+        const maxWidth = Math.floor(window.innerWidth * 0.8);
+        return Math.max(minWidth, Math.min(maxWidth, value));
+    };
+
+    const [editorWidth, setEditorWidth] = useState(() => {
+        if (typeof window === 'undefined') return 360;
+        const pct = getStoredSplitPercent();
+        return clampEditorWidth(Math.round(window.innerWidth * pct));
+    });
+    const resizingRef = useRef(false);
+    const availableTasks = tasks.filter((task) => String(task.id || '') !== String(currentTask.id || ''));
+
     const MAX_COPY_CHARS = 1000000;
-    const MAX_COPY_ITEMS = 2000;
-    const MAX_COPY_KEYS = 2000;
 
     const formatSize = (chars: number) => `${(chars / (1024 * 1024)).toFixed(2)} MB`;
-
-    const clampText = (text: string, limit: number) => {
-        if (text.length <= limit) return { text, truncated: false };
-        return { text: text.slice(0, limit), truncated: true };
-    };
-
-    const getResultsCopyPayload = (payload: Results | null) => {
-        if (!payload || payload.data === undefined || payload.data === null) return { reason: 'No data to copy.' };
-        return { raw: payload.data };
-    };
-
-    const clampWithReason = (text: string, limit: number, reasons: string[]) => {
-        if (text.length <= limit) return text;
-        reasons.push(`first ${limit.toLocaleString()} chars`);
-        return text.slice(0, limit);
-    };
-
-    const getTruncatedCopyText = (raw: any) => {
-        const reasons: string[] = [];
-        if (typeof raw === 'string') {
-            const text = clampWithReason(raw, MAX_COPY_CHARS, reasons);
-            return { text, truncated: reasons.length > 0, reason: reasons.join(', ') };
-        }
-        if (Array.isArray(raw)) {
-            let snapshot = raw;
-            if (raw.length > MAX_COPY_ITEMS) {
-                snapshot = raw.slice(0, MAX_COPY_ITEMS);
-                reasons.push(`first ${MAX_COPY_ITEMS.toLocaleString()} items`);
-            }
-            let text = '';
-            try {
-                text = JSON.stringify(snapshot, null, 2);
-            } catch {
-                text = String(snapshot);
-            }
-            text = clampWithReason(text, MAX_COPY_CHARS, reasons);
-            return { text, truncated: reasons.length > 0, reason: reasons.join(', ') };
-        }
-        if (raw && typeof raw === 'object') {
-            let snapshot = raw;
-            const keys = Object.keys(raw);
-            if (keys.length > MAX_COPY_KEYS) {
-                snapshot = keys.slice(0, MAX_COPY_KEYS).reduce<Record<string, any>>((acc, key) => {
-                    acc[key] = (raw as Record<string, any>)[key];
-                    return acc;
-                }, {});
-                reasons.push(`first ${MAX_COPY_KEYS.toLocaleString()} keys`);
-            }
-            let text = '';
-            try {
-                text = JSON.stringify(snapshot, null, 2);
-            } catch {
-                text = String(snapshot);
-            }
-            text = clampWithReason(text, MAX_COPY_CHARS, reasons);
-            return { text, truncated: reasons.length > 0, reason: reasons.join(', ') };
-        }
-        const text = clampWithReason(String(raw), MAX_COPY_CHARS, reasons);
-        return { text, truncated: reasons.length > 0, reason: reasons.join(', ') };
-    };
-
-    const getFullCopyText = (raw: any) => {
-        if (typeof raw === 'string') return raw;
-        try {
-            return JSON.stringify(raw, null, 2);
-        } catch {
-            return String(raw);
-        }
-    };
-
-    const getResultsPreview = (payload: Results | null): { text: string; truncated: boolean; language: SyntaxLanguage } => {
-        if (!payload || payload.data === undefined || payload.data === null || payload.data === '') {
-            return { text: '', truncated: false, language: 'plain' as const };
-        }
-        const raw = payload.data;
-        if (typeof raw === 'string') {
-            const trimmed = raw.trim();
-            const language: SyntaxLanguage = trimmed.startsWith('<') && trimmed.includes('>')
-                ? 'html'
-                : (trimmed.startsWith('{') || trimmed.startsWith('['))
-                    ? 'json'
-                    : 'plain';
-            const clamped = clampText(raw, MAX_PREVIEW_CHARS);
-            return { text: clamped.text, truncated: clamped.truncated, language };
-        }
-        if (Array.isArray(raw)) {
-            const sliced = raw.length > MAX_PREVIEW_ITEMS ? raw.slice(0, MAX_PREVIEW_ITEMS) : raw;
-            const text = JSON.stringify(sliced, null, 2);
-            const clamped = clampText(text, MAX_PREVIEW_CHARS);
-            return { text: clamped.text, truncated: clamped.truncated || raw.length > MAX_PREVIEW_ITEMS, language: 'json' as const };
-        }
-        if (raw && typeof raw === 'object') {
-            const keys = Object.keys(raw);
-            let snapshot = raw;
-            let truncated = false;
-            if (keys.length > MAX_PREVIEW_KEYS) {
-                truncated = true;
-                snapshot = keys.slice(0, MAX_PREVIEW_KEYS).reduce<Record<string, any>>((acc, key) => {
-                    acc[key] = (raw as Record<string, any>)[key];
-                    return acc;
-                }, {});
-            }
-            const text = JSON.stringify(snapshot, null, 2);
-            const clamped = clampText(text, MAX_PREVIEW_CHARS);
-            return { text: clamped.text, truncated: clamped.truncated || truncated, language: 'json' as const };
-        }
-        const clamped = clampText(String(raw), MAX_PREVIEW_CHARS);
-        return { text: clamped.text, truncated: clamped.truncated, language: 'plain' as const };
-    };
 
     const handleCopy = async (text: string, id: string, options?: { skipSizeConfirm?: boolean; truncatedNotice?: boolean }) => {
         if (!text) {
@@ -270,14 +222,72 @@ const EditorScreen: React.FC<EditorScreenProps> = ({
         }
     };
 
-    const addAction = () => {
-        const newAction: Action = {
+    const blockStartTypes = new Set(['if', 'while', 'repeat', 'foreach', 'on_error']);
+    const normalizeVarName = (raw: string) => {
+        const trimmed = (raw || '').trim();
+        const match = trimmed.match(/^\{\$([\w.]+)\}$/);
+        return match ? match[1] : trimmed;
+    };
+    const conditionOps = {
+        string: [
+            { value: 'equals', label: 'Equals' },
+            { value: 'not_equals', label: 'Not equal' },
+            { value: 'contains', label: 'Contains' },
+            { value: 'starts_with', label: 'Starts with' },
+            { value: 'ends_with', label: 'Ends with' },
+            { value: 'matches', label: 'Matches regex' }
+        ],
+        number: [
+            { value: 'equals', label: 'Equals' },
+            { value: 'not_equals', label: 'Not equal' },
+            { value: 'gt', label: 'Greater than' },
+            { value: 'gte', label: 'Greater or equal' },
+            { value: 'lt', label: 'Less than' },
+            { value: 'lte', label: 'Less or equal' }
+        ],
+        boolean: [
+            { value: 'is_true', label: 'Is true' },
+            { value: 'is_false', label: 'Is false' }
+        ]
+    };
+
+    const getBlockDepths = (actions: Action[]) => {
+        let depth = 0;
+        return actions.map((action) => {
+            if (action.type === 'else' || action.type === 'end') {
+                depth = Math.max(0, depth - 1);
+            }
+            const currentDepth = depth;
+            if (action.type === 'else' || blockStartTypes.has(action.type)) {
+                depth += 1;
+            }
+            return currentDepth;
+        });
+    };
+
+    const addActionByType = (type: Action['type']) => {
+        const base: Action = {
             id: "act_" + Date.now(),
-            type: 'click',
+            type,
             selector: '',
             value: ''
         };
-        setCurrentTask({ ...currentTask, actions: [...currentTask.actions, newAction] });
+        if (type === 'set') base.varName = '';
+        if (type === 'merge') base.varName = '';
+        if (type === 'start') base.value = '';
+        if (type === 'if') {
+            base.conditionVar = '';
+            base.conditionVarType = 'string';
+            base.conditionOp = 'equals';
+            base.conditionValue = '';
+        }
+        setCurrentTask({ ...currentTask, actions: [...currentTask.actions, base] });
+    };
+
+    const openActionPalette = (targetId?: string) => {
+        setActionPaletteOpen(true);
+        setActionPaletteQuery('');
+        setActionPaletteTargetId(targetId || null);
     };
 
     const removeAction = (id: string) => {
@@ -301,7 +311,7 @@ const EditorScreen: React.FC<EditorScreenProps> = ({
 
     const isInteractiveTarget = (target: EventTarget | null) => {
         if (!target || !(target instanceof HTMLElement)) return false;
-        return !!target.closest('input, textarea, select, [contenteditable="true"]');
+        return !!target.closest('input, textarea, select, button, a, [contenteditable="true"], [data-no-drag="true"]');
     };
 
     const getDragIndexFromY = (pointerY: number, activeId: string, snapIndex?: number, snapCenter?: number) => {
@@ -409,6 +419,36 @@ const EditorScreen: React.FC<EditorScreenProps> = ({
         };
     }, [contextMenu]);
 
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const pct = getStoredSplitPercent();
+        setEditorWidth(clampEditorWidth(Math.round(window.innerWidth * pct)));
+    }, []);
+
+    useEffect(() => {
+        const handlePointerMove = (event: PointerEvent) => {
+            if (!resizingRef.current) return;
+            const next = clampEditorWidth(event.clientX);
+            setEditorWidth(next);
+        };
+
+        const handlePointerUp = () => {
+            resizingRef.current = false;
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+        };
+
+        window.addEventListener('pointermove', handlePointerMove);
+        window.addEventListener('pointerup', handlePointerUp);
+        window.addEventListener('pointercancel', handlePointerUp);
+        return () => {
+            window.removeEventListener('pointermove', handlePointerMove);
+            window.removeEventListener('pointerup', handlePointerUp);
+            window.removeEventListener('pointercancel', handlePointerUp);
+        };
+    }, []);
+
+
     const removeVariable = (name: string) => {
         const next = { ...currentTask.variables };
         delete next[name];
@@ -460,13 +500,33 @@ const EditorScreen: React.FC<EditorScreenProps> = ({
         }
     };
 
+    const openVersionPreview = async (versionId: string) => {
+        if (!currentTask.id) return;
+        setVersionPreviewLoading(true);
+        try {
+            const res = await fetch(`/api/tasks/${currentTask.id}/versions/${versionId}`);
+            if (!res.ok) throw new Error('Failed to load version');
+            const data = await res.json();
+            if (!data?.snapshot) throw new Error('Missing snapshot');
+            setVersionPreview({
+                id: data.metadata?.id || versionId,
+                timestamp: data.metadata?.timestamp || Date.now(),
+                snapshot: data.snapshot
+            });
+        } catch {
+            onNotify('Failed to load version snapshot.', 'error');
+        } finally {
+            setVersionPreviewLoading(false);
+        }
+    };
+
     useEffect(() => {
         if (editorView === 'history') loadVersions();
     }, [editorView, currentTask.id]);
 
     return (
         <div className="flex-1 flex overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <aside className="w-[460px] glass border-r border-white/10 flex flex-col shrink-0 overflow-hidden">
+            <aside className="glass border-r border-white/10 flex flex-col shrink-0 overflow-hidden" style={{ width: editorWidth }}>
                 <div className="p-8 border-b border-white/10 space-y-6 shrink-0">
                     <div className="flex items-center justify-between">
                         <input
@@ -521,7 +581,9 @@ const EditorScreen: React.FC<EditorScreenProps> = ({
                 </div>
                 </div>
 
-                <div className="flex-1 overflow-y-auto custom-scrollbar p-8 space-y-8 min-h-0 relative">
+                <div
+                    className={`flex-1 p-8 min-h-0 relative ${editorView === 'json' ? 'overflow-hidden' : 'overflow-y-auto custom-scrollbar'} ${editorView === 'visual' ? 'space-y-8' : ''}`}
+                >
                     {editorView === 'visual' && (
                         <div className="space-y-6">
                             <div className="space-y-2">
@@ -548,72 +610,12 @@ const EditorScreen: React.FC<EditorScreenProps> = ({
                                 </div>
                             </div>
 
-                            <details className="border-t border-white/10 pt-6 font-sans">
-                                <summary className="cursor-pointer text-[9px] font-bold text-gray-500 uppercase tracking-[0.2em] hover:text-gray-400 transition-all">
-                                    Variables (Injectable)
-                                </summary>
-                                <div className="space-y-3 mt-3">
-                                    <div className="flex items-center justify-between">
-                                        <p className="text-[8px] text-gray-600">Dynamic Params</p>
-                                        <button onClick={addVariable} className="px-3 py-1 bg-white/5 border border-white/10 text-white text-[8px] font-bold rounded-lg uppercase tracking-widest hover:bg-white/10 transition-all">+ Add</button>
-                                    </div>
-                                    <div className="space-y-2">
-                                        {Object.entries(currentTask.variables).map(([name, def]) => (
-                                            <VariableRow
-                                                key={name}
-                                                name={name}
-                                                def={def}
-                                                updateVariable={updateVariable}
-                                                removeVariable={removeVariable}
-                                            />
-                                        ))}
-                                    </div>
-                                </div>
-                            </details>
-
-                            <details className="border-t border-white/10 pt-6 font-sans">
-                                <summary className="cursor-pointer text-[9px] font-bold text-gray-500 uppercase tracking-[0.2em] hover:text-gray-400 transition-all">
-                                    Extraction Script
-                                </summary>
-                                <div className="space-y-3 mt-3">
-                                    <p className="text-[8px] text-gray-600">Process scraped HTML with JavaScript. Use <code className="text-blue-400 bg-white/5 px-1 py-0.5 rounded">$$data.html()</code> to access the raw HTML.</p>
-                                    <div className="w-full bg-[#050505] border border-white/10 rounded-xl p-4 font-mono text-xs text-green-300 focus-within:border-white/30 resize-none custom-scrollbar leading-relaxed min-h-[200px] whitespace-pre-wrap">
-                                        <RichInput
-                                            value={currentTask.extractionScript || ''}
-                                            onChange={(val) => setCurrentTask({ ...currentTask, extractionScript: val })}
-                                            variables={currentTask.variables}
-                                            syntax="javascript"
-                                            placeholder={`// Example: Extract all links
-const html = $$data.html();
-const parser = new DOMParser();
-const doc = parser.parseFromString(html, 'text/html');
-const links = Array.from(doc.querySelectorAll('a')).map(a => a.href);
-return JSON.stringify(links, null, 2);`}
-                                        />
-                                    </div>
-                                </div>
-                            </details>
-
-                            {currentTask.mode === 'scrape' && (
-                                <div className="space-y-2">
-                                    <label className="text-[9px] font-bold text-gray-400 uppercase tracking-[0.2em]">Selector Filter</label>
-                                    <div className="w-full bg-white/[0.05] border border-white/10 rounded-xl px-4 py-3 text-sm focus-within:border-white/30 transition-all">
-                                        <RichInput
-                                            value={currentTask.selector || ''}
-                                            onChange={(val) => setCurrentTask({ ...currentTask, selector: val })}
-                                            variables={currentTask.variables}
-                                            placeholder=".main-content"
-                                        />
-                                    </div>
-                                </div>
-                            )
-                            }
-
-                            {
-                                currentTask.mode === 'agent' && (
-                                    <div className="space-y-6">
+                            {currentTask.mode === 'agent' && (
+                                    <div className="space-y-6 order-1">
                                     <div className="space-y-3" ref={actionsListRef}>
-                                        {currentTask.actions.map((action, idx) => {
+                                        {(() => {
+                                            const blockDepths = getBlockDepths(currentTask.actions);
+                                            return currentTask.actions.map((action, idx) => {
                                                 const isDragging = dragState?.id === action.id;
                                                 const isBetween =
                                                     dragState &&
@@ -623,6 +625,29 @@ return JSON.stringify(links, null, 2);`}
                                                     ((dragState.index < dragOverIndex && idx > dragState.index && idx <= dragOverIndex) ||
                                                         (dragState.index > dragOverIndex && idx < dragState.index && idx >= dragOverIndex));
                                                 const translateY = isBetween ? (dragState?.height || 0) * (dragState.index < (dragOverIndex ?? 0) ? -1 : 1) : 0;
+                                                const depth = blockDepths[idx] || 0;
+                                                    const renderBlockMarker = (type: Action['type']) => {
+                                                        const iconClass = "w-3 h-3";
+                                                        if (type === 'if' || type === 'else') return <Split className={`${iconClass} text-blue-400`} />;
+                                                        if (type === 'end') return <CornerRightDown className={`${iconClass} text-gray-500`} />;
+                                                        if (type === 'while' || type === 'repeat') return <Repeat className={`${iconClass} text-amber-400`} />;
+                                                        if (type === 'foreach') return <List className={`${iconClass} text-amber-300`} />;
+                                                        if (type === 'on_error') return <AlertTriangle className={`${iconClass} text-red-400`} />;
+                                                        if (type === 'set') return <Variable className={`${iconClass} text-green-400`} />;
+                                                        if (type === 'stop') return <Square className={`${iconClass} text-red-400`} />;
+                                                        if (type === 'click') return <MousePointer2 className={`${iconClass} text-blue-300`} />;
+                                                        if (type === 'type') return <TypeIcon className={`${iconClass} text-green-300`} />;
+                                                        if (type === 'hover') return <Target className={`${iconClass} text-purple-300`} />;
+                                                        if (type === 'press') return <Keyboard className={`${iconClass} text-amber-300`} />;
+                                                        if (type === 'wait') return <Clock className={`${iconClass} text-slate-300`} />;
+                                                        if (type === 'scroll') return <ArrowDownUp className={`${iconClass} text-cyan-300`} />;
+                                                        if (type === 'javascript') return <Code className={`${iconClass} text-yellow-300`} />;
+                                                        if (type === 'csv') return <Table className={`${iconClass} text-emerald-300`} />;
+                                                        if (type === 'merge') return <Layers className={`${iconClass} text-emerald-200`} />;
+                                                        if (type === 'start') return <PlayCircle className={`${iconClass} text-emerald-300`} />;
+                                                        return <span className="text-[9px] text-white/20">|</span>;
+                                                    };
+
                                                 return (
                                                 <div
                                                     key={action.id}
@@ -657,27 +682,30 @@ return JSON.stringify(links, null, 2);`}
                                                             ? `translateY(${(dragState?.currentY || 0) - (dragState?.pointerOffset || 0) - (dragState?.originTop || 0)}px)`
                                                             : translateY
                                                                 ? `translateY(${translateY}px)`
-                                                                : undefined
+                                                                : undefined,
+                                                        marginLeft: depth ? depth * 12 : undefined
                                                     }}
                                                 >
                                                     <div className="flex items-center justify-between">
                                                         <div className="flex items-center gap-3">
                                                             <div className="text-[8px] font-bold text-white/20 font-mono tracking-tighter">{(idx + 1).toString().padStart(2, '0')}</div>
-                                                            <select
-                                        value={action.type}
-                                        onChange={(e) => updateAction(action.id, { type: e.target.value as any })}
-                                        className="action-type-select text-[10px] font-bold uppercase tracking-[0.2em] text-blue-400 focus:outline-none cursor-pointer"
-                                    >
-                                                                <option value="click">Click</option>
-                                                                <option value="type">Type</option>
-                                                                <option value="hover">Hover</option>
-                                                                <option value="press">Press</option>
-                                                                <option value="wait">Wait</option>
-                                                                <option value="scroll">Scroll</option>
-                                                                <option value="javascript">JavaScript</option>
-                                                            </select>
+                                                            <div className="w-4 h-4 flex items-center justify-center">
+                                                                {renderBlockMarker(action.type)}
+                                                            </div>
+                                                            <button
+                                                                onClick={() => openActionPalette(action.id)}
+                                                                className="action-type-select text-[10px] font-bold uppercase tracking-[0.2em] text-blue-400 focus:outline-none cursor-pointer"
+                                                            >
+                                                                {ACTION_CATALOG.find((item) => item.type === action.type)?.label || action.type}
+                                                            </button>
                                                         </div>
-                                                        <button onClick={() => removeAction(action.id)} className="text-gray-600 hover:text-red-500 transition-colors opacity-0 group-hover/item:opacity-100"><X className="w-4 h-4" /></button>
+                                                        <button
+                                                            data-no-drag="true"
+                                                            onClick={() => removeAction(action.id)}
+                                                            className="text-gray-600 hover:text-red-500 transition-colors opacity-0 group-hover/item:opacity-100"
+                                                        >
+                                                            <X className="w-4 h-4" />
+                                                        </button>
                                                     </div>
                                                     {(action.type === 'click' || action.type === 'type' || action.type === 'hover') && (
                                                         <div className="space-y-1.5">
@@ -707,7 +735,7 @@ return JSON.stringify(links, null, 2);`}
                                                         </div>
                                                     )}
 
-                                                    {(action.type === 'type' || action.type === 'wait' || action.type === 'scroll' || action.type === 'javascript') && (
+                                                    {(action.type === 'type' || action.type === 'wait' || action.type === 'scroll' || action.type === 'javascript' || action.type === 'csv') && (
                                                         <div className="space-y-1.5">
                                                             <label className="text-[7px] font-bold text-gray-600 uppercase tracking-widest pl-1">
                                                                 {action.type === 'type'
@@ -716,7 +744,9 @@ return JSON.stringify(links, null, 2);`}
                                                                         ? 'Seconds'
                                                                         : action.type === 'scroll'
                                                                             ? 'Pixels'
-                                                                            : 'Script'}
+                                                                            : action.type === 'csv'
+                                                                                ? 'CSV Input'
+                                                                                : 'Script'}
                                                             </label>
                                                             <div className="bg-white/[0.03] border border-white/5 rounded-xl px-3 py-2 text-[11px] focus-within:border-white/20 transition-all">
                                                                 {action.type === 'javascript' ? (
@@ -727,6 +757,15 @@ return JSON.stringify(links, null, 2);`}
                                                                         variables={currentTask.variables}
                                                                         className="min-h-[120px]"
                                                                         placeholder="return document.title"
+                                                                    />
+                                                                ) : action.type === 'csv' ? (
+                                                                    <CodeEditor
+                                                                        value={action.value || ''}
+                                                                        onChange={(v) => updateAction(action.id, { value: v })}
+                                                                        language="plain"
+                                                                        variables={currentTask.variables}
+                                                                        className="min-h-[120px]"
+                                                                        placeholder="name,age\nAda,31"
                                                                     />
                                                                 ) : (
                                                                     <RichInput
@@ -753,9 +792,238 @@ return JSON.stringify(links, null, 2);`}
                                                             </div>
                                                         </div>
                                                     )}
+
+                                                    {action.type === 'if' && (() => {
+                                                        const varKeys = Object.keys(currentTask.variables || {});
+                                                        const normalizedVar = normalizeVarName(action.conditionVar || '');
+                                                        const inferredType = normalizedVar && currentTask.variables?.[normalizedVar]?.type;
+                                                        const varType = action.conditionVarType || inferredType || 'string';
+                                                        const ops = conditionOps[varType as VarType] || conditionOps.string;
+                                                        const opValue = action.conditionOp || ops[0].value;
+                                                        return (
+                                                            <div className="space-y-2">
+                                                                <label className="text-[7px] font-bold text-gray-600 uppercase tracking-widest pl-1">Condition</label>
+                                                                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                                                                    <div className="space-y-1">
+                                                                        <span className="text-[7px] font-bold text-gray-500 uppercase tracking-widest pl-1">Variable</span>
+                                                                        <input
+                                                                            type="text"
+                                                                            list={`if-var-${action.id}`}
+                                                                            value={action.conditionVar || ''}
+                                                                            onChange={(e) => updateAction(action.id, { conditionVar: e.target.value })}
+                                                                            placeholder="variable name"
+                                                                            className="w-full bg-white/[0.05] border border-white/10 rounded-lg px-3 py-2 text-[10px] text-white"
+                                                                        />
+                                                                        {varKeys.length > 0 && (
+                                                                            <datalist id={`if-var-${action.id}`}>
+                                                                                {varKeys.map((key) => (
+                                                                                    <option key={key} value={key} />
+                                                                                ))}
+                                                                            </datalist>
+                                                                        )}
+                                                                    </div>
+                                                                    <div className="space-y-1">
+                                                                        <span className="text-[7px] font-bold text-gray-500 uppercase tracking-widest pl-1">Type</span>
+                                                                        <select
+                                                                            value={varType}
+                                                                            onChange={(e) => {
+                                                                                const nextType = e.target.value as VarType;
+                                                                                const nextOps = conditionOps[nextType] || conditionOps.string;
+                                                                                updateAction(action.id, {
+                                                                                    conditionVarType: nextType,
+                                                                                    conditionOp: nextOps[0].value,
+                                                                                    conditionValue: nextType === 'boolean' ? '' : action.conditionValue || ''
+                                                                                });
+                                                                            }}
+                                                                            className="custom-select w-full bg-white/[0.05] border border-white/10 rounded-lg px-3 py-2 text-[8px] font-bold uppercase text-white/60"
+                                                                        >
+                                                                            <option value="string">String</option>
+                                                                            <option value="number">Number</option>
+                                                                            <option value="boolean">Boolean</option>
+                                                                        </select>
+                                                                    </div>
+                                                                    <div className="space-y-1">
+                                                                        <span className="text-[7px] font-bold text-gray-500 uppercase tracking-widest pl-1">Relation</span>
+                                                                        <select
+                                                                            value={opValue}
+                                                                            onChange={(e) => updateAction(action.id, { conditionOp: e.target.value })}
+                                                                            className="custom-select w-full bg-white/[0.05] border border-white/10 rounded-lg px-3 py-2 text-[8px] font-bold uppercase text-white/60"
+                                                                        >
+                                                                            {ops.map((opt) => (
+                                                                                <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                                                            ))}
+                                                                        </select>
+                                                                    </div>
+                                                                </div>
+                                                                {varType !== 'boolean' && (
+                                                                    <div className="space-y-1">
+                                                                        <span className="text-[7px] font-bold text-gray-500 uppercase tracking-widest pl-1">Value</span>
+                                                                        <input
+                                                                            type={varType === 'number' ? 'number' : 'text'}
+                                                                            value={action.conditionValue || ''}
+                                                                            onChange={(e) => updateAction(action.id, { conditionValue: e.target.value })}
+                                                                            placeholder={varType === 'number' ? '0' : 'value'}
+                                                                            className="w-full bg-white/[0.05] border border-white/10 rounded-lg px-3 py-2 text-[10px] text-white"
+                                                                        />
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        );
+                                                    })()}
+
+                                                    {action.type === 'while' && (
+                                                        <div className="space-y-1.5">
+                                                            <label className="text-[7px] font-bold text-gray-600 uppercase tracking-widest pl-1">Condition (JS)</label>
+                                                            <div className="bg-white/[0.03] border border-white/5 rounded-xl px-3 py-2 text-[11px] focus-within:border-white/20 transition-all">
+                                                                <RichInput
+                                                                    value={action.value || ''}
+                                                                    onChange={(v) => updateAction(action.id, { value: v })}
+                                                                    variables={currentTask.variables}
+                                                                    placeholder="exists('.login') && text('h1').includes('Welcome')"
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                    )}
+
+                                                    {action.type === 'repeat' && (
+                                                        <div className="space-y-1.5">
+                                                            <label className="text-[7px] font-bold text-gray-600 uppercase tracking-widest pl-1">Times</label>
+                                                            <div className="bg-white/[0.03] border border-white/5 rounded-xl px-3 py-2 text-[11px] focus-within:border-white/20 transition-all">
+                                                                <RichInput
+                                                                    value={action.value || ''}
+                                                                    onChange={(v) => updateAction(action.id, { value: v })}
+                                                                    variables={currentTask.variables}
+                                                                    placeholder="3"
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                    )}
+
+                                                    {action.type === 'foreach' && (
+                                                        <div className="space-y-3">
+                                                            <div className="space-y-1.5">
+                                                                <label className="text-[7px] font-bold text-gray-600 uppercase tracking-widest pl-1">Selector (Optional)</label>
+                                                                <div className="bg-white/[0.03] border border-white/5 rounded-xl px-3 py-2 text-[11px] focus-within:border-white/20 transition-all">
+                                                                    <RichInput
+                                                                        value={action.selector || ''}
+                                                                        onChange={(v) => updateAction(action.id, { selector: v })}
+                                                                        variables={currentTask.variables}
+                                                                        placeholder=".list-item"
+                                                                    />
+                                                                </div>
+                                                            </div>
+                                                            <div className="space-y-1.5">
+                                                                <label className="text-[7px] font-bold text-gray-600 uppercase tracking-widest pl-1">Variable (Array Name)</label>
+                                                                <div className="bg-white/[0.03] border border-white/5 rounded-xl px-3 py-2 text-[11px] focus-within:border-white/20 transition-all">
+                                                                    <RichInput
+                                                                        value={action.varName || ''}
+                                                                        onChange={(v) => updateAction(action.id, { varName: v })}
+                                                                        variables={currentTask.variables}
+                                                                        placeholder="items"
+                                                                    />
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    )}
+
+                                                    {action.type === 'set' && (
+                                                        <div className="space-y-3">
+                                                            <div className="space-y-1.5">
+                                                                <label className="text-[7px] font-bold text-gray-600 uppercase tracking-widest pl-1">Variable Name</label>
+                                                                <div className="bg-white/[0.03] border border-white/5 rounded-xl px-3 py-2 text-[11px] focus-within:border-white/20 transition-all">
+                                                                    <RichInput
+                                                                        value={action.varName || ''}
+                                                                        onChange={(v) => updateAction(action.id, { varName: v })}
+                                                                        variables={currentTask.variables}
+                                                                        placeholder="status"
+                                                                    />
+                                                                </div>
+                                                            </div>
+                                                            <div className="space-y-1.5">
+                                                                <label className="text-[7px] font-bold text-gray-600 uppercase tracking-widest pl-1">Value</label>
+                                                                <div className="bg-white/[0.03] border border-white/5 rounded-xl px-3 py-2 text-[11px] focus-within:border-white/20 transition-all">
+                                                                    <RichInput
+                                                                        value={action.value || ''}
+                                                                        onChange={(v) => updateAction(action.id, { value: v })}
+                                                                        variables={currentTask.variables}
+                                                                        placeholder="ready"
+                                                                    />
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    )}
+
+                                                    {action.type === 'merge' && (
+                                                        <div className="space-y-3">
+                                                            <div className="space-y-1.5">
+                                                                <label className="text-[7px] font-bold text-gray-600 uppercase tracking-widest pl-1">Sources</label>
+                                                                <div className="bg-white/[0.03] border border-white/5 rounded-xl px-3 py-2 text-[11px] focus-within:border-white/20 transition-all">
+                                                                    <RichInput
+                                                                        value={action.value || ''}
+                                                                        onChange={(v) => updateAction(action.id, { value: v })}
+                                                                        variables={currentTask.variables}
+                                                                        placeholder="items, extraItems, {$block.output}"
+                                                                    />
+                                                                </div>
+                                                            </div>
+                                                            <div className="space-y-1.5">
+                                                                <label className="text-[7px] font-bold text-gray-600 uppercase tracking-widest pl-1">Target Variable (Optional)</label>
+                                                                <div className="bg-white/[0.03] border border-white/5 rounded-xl px-3 py-2 text-[11px] focus-within:border-white/20 transition-all">
+                                                                    <RichInput
+                                                                        value={action.varName || ''}
+                                                                        onChange={(v) => updateAction(action.id, { varName: v })}
+                                                                        variables={currentTask.variables}
+                                                                        placeholder="allItems"
+                                                                    />
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    )}
+
+                                                    {action.type === 'stop' && (
+                                                        <div className="space-y-1.5">
+                                                            <label className="text-[7px] font-bold text-gray-600 uppercase tracking-widest pl-1">Outcome</label>
+                                                            <select
+                                                                value={action.value || 'success'}
+                                                                onChange={(e) => updateAction(action.id, { value: e.target.value })}
+                                                                className="w-full bg-white/[0.03] border border-white/5 rounded-xl px-3 py-2 text-[9px] font-bold uppercase tracking-[0.2em] text-white/70 focus:outline-none"
+                                                            >
+                                                                <option value="success">Success</option>
+                                                                <option value="error">Error</option>
+                                                            </select>
+                                                        </div>
+                                                    )}
+
+                                                    {action.type === 'on_error' && (
+                                                        <div className="text-[8px] text-gray-600 uppercase tracking-widest">
+                                                            Runs if any action fails.
+                                                        </div>
+                                                    )}
+
+                                                    {action.type === 'start' && (
+                                                        <div className="space-y-1.5">
+                                                            <label className="text-[7px] font-bold text-gray-600 uppercase tracking-widest pl-1">Task</label>
+                                                            <select
+                                                                value={action.value || ''}
+                                                                onChange={(e) => updateAction(action.id, { value: e.target.value })}
+                                                                className="w-full bg-white/[0.03] border border-white/5 rounded-xl px-3 py-2 text-[9px] font-bold uppercase tracking-[0.2em] text-white/70 focus:outline-none"
+                                                            >
+                                                                <option value="" disabled>Select task</option>
+                                                                {availableTasks.length === 0 && (
+                                                                    <option value="" disabled>No other tasks</option>
+                                                                )}
+                                                                {availableTasks.map((task) => (
+                                                                    <option key={task.id} value={task.id}>
+                                                                        {task.name || task.id}
+                                                                    </option>
+                                                                ))}
+                                                            </select>
+                                                        </div>
+                                                    )}
                                                 </div>
                                                 );
-                                            })}
+                                            });
+                                        })()}
                                             {contextMenu && (() => {
                                                 const targetIndex = currentTask.actions.findIndex(a => a.id === contextMenu.id);
                                                 const target = currentTask.actions[targetIndex];
@@ -766,10 +1034,10 @@ return JSON.stringify(links, null, 2);`}
                                                         style={{ left: contextMenu.x, top: contextMenu.y }}
                                                     >
                                                         <button
-                                                            onClick={() => {
-                                                                updateAction(target.id, { disabled: !target.disabled });
-                                                                closeContextMenu();
-                                                            }}
+                                    onClick={() => {
+                                        updateAction(target.id, { disabled: !target.disabled });
+                                        closeContextMenu();
+                                    }}
                                                             className="w-full text-left px-3 py-2 rounded-lg hover:bg-white/5 transition-colors"
                                                         >
                                                             {target.disabled ? 'Enable' : 'Disable'}
@@ -818,7 +1086,7 @@ return JSON.stringify(links, null, 2);`}
                                                 );
                                             })()}
                                             <button
-                                                onClick={addAction}
+                                                onClick={() => openActionPalette()}
                                                 className="w-full py-3 border border-dashed border-white/20 rounded-xl text-[9px] font-bold uppercase tracking-widest text-gray-500 hover:text-white transition-all bg-white/[0.02]"
                                             >
                                                 + Append Action Seq
@@ -848,10 +1116,81 @@ return JSON.stringify(links, null, 2);`}
                                             </div>
                                         </div>
                                     </div>
-                                )
+                                )}
+
+                            <details className="border-t border-white/10 pt-6 font-sans">
+                                <summary className="cursor-pointer text-[9px] font-bold text-gray-500 uppercase tracking-[0.2em] hover:text-gray-400 transition-all">
+                                    Variables (Injectable)
+                                </summary>
+                                <div className="space-y-3 mt-3">
+                                    <div className="flex items-center justify-between">
+                                        <p className="text-[8px] text-gray-600">Dynamic Params</p>
+                                        <button onClick={addVariable} className="px-3 py-1 bg-white/5 border border-white/10 text-white text-[8px] font-bold rounded-lg uppercase tracking-widest hover:bg-white/10 transition-all">+ Add</button>
+                                    </div>
+                                    <div className="space-y-2">
+                                        {Object.entries(currentTask.variables).map(([name, def]) => (
+                                            <VariableRow
+                                                key={name}
+                                                name={name}
+                                                def={def}
+                                                updateVariable={updateVariable}
+                                                removeVariable={removeVariable}
+                                            />
+                                        ))}
+                                    </div>
+                                </div>
+                            </details>
+
+                            <details className="border-t border-white/10 pt-6 font-sans">
+                                <summary className="cursor-pointer text-[9px] font-bold text-gray-500 uppercase tracking-[0.2em] hover:text-gray-400 transition-all">
+                                    Extraction Script
+                                </summary>
+                                <div className="space-y-3 mt-3">
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-[8px] text-gray-600 uppercase tracking-widest">Output format</span>
+                                        <select
+                                            value={currentTask.extractionFormat || 'json'}
+                                            onChange={(e) => setCurrentTask({ ...currentTask, extractionFormat: e.target.value as 'json' | 'csv' })}
+                                            className="custom-select bg-white/[0.05] border border-white/10 rounded-lg px-3 py-2 text-[8px] font-bold uppercase text-white/60"
+                                        >
+                                            <option value="json">JSON</option>
+                                            <option value="csv">CSV</option>
+                                        </select>
+                                    </div>
+                                    <p className="text-[8px] text-gray-600">Process scraped HTML with JavaScript. Use <code className="text-blue-400 bg-white/5 px-1 py-0.5 rounded">$$data.html()</code> to access the raw HTML.</p>
+                                    <div className="w-full bg-[#050505] border border-white/10 rounded-xl p-4 font-mono text-xs text-green-300 focus-within:border-white/30 resize-none custom-scrollbar leading-relaxed min-h-[200px] whitespace-pre-wrap">
+                                        <RichInput
+                                            value={currentTask.extractionScript || ''}
+                                            onChange={(val) => setCurrentTask({ ...currentTask, extractionScript: val })}
+                                            variables={currentTask.variables}
+                                            syntax="javascript"
+                                            placeholder={`// Example: Extract all links
+const html = $$data.html();
+const parser = new DOMParser();
+const doc = parser.parseFromString(html, 'text/html');
+const links = Array.from(doc.querySelectorAll('a')).map(a => a.href);
+return JSON.stringify(links, null, 2);`}
+                                        />
+                                    </div>
+                                </div>
+                            </details>
+
+                            {currentTask.mode === 'scrape' && (
+                                <div className="space-y-2">
+                                    <label className="text-[9px] font-bold text-gray-400 uppercase tracking-[0.2em]">Selector Filter</label>
+                                    <div className="w-full bg-white/[0.05] border border-white/10 rounded-xl px-4 py-3 text-sm focus-within:border-white/30 transition-all">
+                                        <RichInput
+                                            value={currentTask.selector || ''}
+                                            onChange={(val) => setCurrentTask({ ...currentTask, selector: val })}
+                                            variables={currentTask.variables}
+                                            placeholder=".main-content"
+                                        />
+                                    </div>
+                                </div>
+                            )
                             }
 
-                            <div className="pt-4 border-t border-white/10">
+                            <div className="pt-4 border-t border-white/10 space-y-3">
                                 <label className="flex items-center gap-3 p-3.5 rounded-2xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.05] transition-all cursor-pointer group">
                                     <input
                                         type="checkbox"
@@ -859,38 +1198,29 @@ return JSON.stringify(links, null, 2);`}
                                         onChange={(e) => setCurrentTask({ ...currentTask, rotateUserAgents: e.target.checked })}
                                         className="w-4 h-4 rounded border-white/20 bg-transparent"
                                     />
-                                    <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest group-hover:text-white">Rotate Identity Proxies</span>
+                                    <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest group-hover:text-white">Rotate UA</span>
+                                </label>
+                                <label className="flex items-center gap-3 p-3.5 rounded-2xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.05] transition-all cursor-pointer group">
+                                    <input
+                                        type="checkbox"
+                                        checked={currentTask.includeShadowDom !== false}
+                                        onChange={(e) => setCurrentTask({ ...currentTask, includeShadowDom: e.target.checked })}
+                                        className="w-4 h-4 rounded border-white/20 bg-transparent"
+                                    />
+                                    <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest group-hover:text-white">Include Shadow DOM in HTML</span>
                                 </label>
                             </div>
                         </div>
                     )}
 
                     {editorView === 'json' && (
-                        <div className="h-full flex flex-col">
-                            <div className="flex items-center justify-between mb-3">
-                                <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Protocol JSON</span>
-                                <button
-                                    onClick={() => { void handleCopy(JSON.stringify(currentTask, null, 2), 'json'); }}
-                                    className={`px-4 py-2 border text-[9px] font-bold rounded-xl uppercase transition-all flex items-center gap-2 ${copied === 'json' ? 'bg-green-500/10 border-green-500/20 text-green-400' : 'bg-white/5 border-white/10 text-white hover:bg-white/10'}`}
-                                >
-                                    {copied === 'json' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                                    {copied === 'json' ? 'Copied' : 'Copy'}
-                                </button>
-                            </div>
-                            <CodeEditor
-                                value={JSON.stringify(currentTask, null, 2)}
-                                onChange={(val) => {
-                                    try {
-                                        const parsed = JSON.parse(val);
-                                        setCurrentTask(parsed);
-                                    } catch (err) { }
-                                }}
-                                language="json"
-                                className="flex-1"
-                            />
-                        </div>
-                    )
-                    }
+                        <JsonEditorPane
+                            task={currentTask}
+                            onChange={setCurrentTask}
+                            onCopy={(text, id) => { void handleCopy(text, id); }}
+                            copiedId={copied}
+                        />
+                    )}
 
                     {
                         editorView === 'api' && (
@@ -987,21 +1317,54 @@ return JSON.stringify(links, null, 2);`}
                                         <div className="space-y-1">
                                             <div className="text-[10px] font-bold text-white uppercase tracking-widest">{version.name}</div>
                                             <div className="text-[8px] text-gray-500 uppercase tracking-[0.2em]">
-                                                {new Date(version.timestamp).toLocaleString()} • {version.mode}
+                                                {new Date(version.timestamp).toLocaleString()} | {version.mode}
                                             </div>
                                         </div>
-                                        <button
-                                            onClick={() => rollbackToVersion(version.id)}
-                                            className="px-4 py-2 text-[9px] font-bold uppercase tracking-widest rounded-xl bg-white/5 border border-white/10 text-white hover:bg-white/10 transition-all"
-                                        >
-                                            Rollback
-                                        </button>
+                                        <div className="flex items-center gap-2">
+                                            <button
+                                                onClick={() => openVersionPreview(version.id)}
+                                                disabled={versionPreviewLoading}
+                                                className="px-4 py-2 text-[9px] font-bold uppercase tracking-widest rounded-xl bg-white/5 border border-white/10 text-white hover:bg-white/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                            >
+                                                {versionPreviewLoading ? 'Loading...' : 'View'}
+                                            </button>
+                                            <button
+                                                onClick={() => rollbackToVersion(version.id)}
+                                                className="px-4 py-2 text-[9px] font-bold uppercase tracking-widest rounded-xl bg-white/5 border border-white/10 text-white hover:bg-white/10 transition-all"
+                                            >
+                                                Rollback
+                                            </button>
+                                        </div>
                                     </div>
                                 ))}
                             </div>
                         </div>
                     )}
                 </div >
+                <ActionPalette
+                    open={actionPaletteOpen}
+                    query={actionPaletteQuery}
+                    onQueryChange={setActionPaletteQuery}
+                    onClose={() => setActionPaletteOpen(false)}
+                    onSelect={(type) => {
+                        if (actionPaletteTargetId) {
+                            if (type === 'if') {
+                                updateAction(actionPaletteTargetId, {
+                                    type,
+                                    conditionVar: '',
+                                    conditionVarType: 'string',
+                                    conditionOp: 'equals',
+                                    conditionValue: ''
+                                });
+                            } else {
+                                updateAction(actionPaletteTargetId, { type });
+                            }
+                        } else {
+                            addActionByType(type);
+                        }
+                        setActionPaletteOpen(false);
+                    }}
+                />
 
                 <div className="p-8 border-t border-white/10 backdrop-blur-xl shrink-0">
                     <button
@@ -1018,133 +1381,74 @@ return JSON.stringify(links, null, 2);`}
                     </button>
                 </div>
             </aside >
+            <div
+                className="w-2 cursor-col-resize bg-white/5 hover:bg-white/10 transition-colors"
+                onPointerDown={(event) => {
+                    event.preventDefault();
+                    resizingRef.current = true;
+                    document.body.style.cursor = 'col-resize';
+                    document.body.style.userSelect = 'none';
+                }}
+            />
 
             <main className="flex-1 overflow-y-auto custom-scrollbar bg-[#020202] p-12 relative">
                 <div className="absolute inset-0 opacity-[0.02] pointer-events-none"
                     style={{ backgroundImage: 'radial-gradient(#fff 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
 
-                {!results && !isExecuting && (
-                    <div className="h-full flex flex-col items-center justify-center text-center space-y-4 opacity-20">
-                        <div className="w-16 h-16 border border-white/10 rounded-full flex items-center justify-center">
-                            <Terminal className="w-6 h-6 text-white" />
-                        </div>
-                        <p className="text-[9px] font-bold uppercase tracking-[0.3em]">Ready</p>
-                    </div>
-                )}
-
-                {(results || isExecuting) && (
-                    <div className="space-y-12 relative z-10 max-w-5xl mx-auto">
-                        <div className="flex items-end justify-between border-b border-white/5 pb-10">
-                            <div className="space-y-4">
-                                <p className="text-[9px] font-bold text-gray-500 uppercase tracking-[0.3em]">Preview</p>
-                                <h2 className="text-xl font-mono text-white truncate max-w-xl tracking-tight italic">
-                                    {results?.finalUrl || results?.url || currentTask.url}
-                                </h2>
-                            </div>
-                            <div className={`px-4 py-2 rounded-xl text-[9px] font-bold uppercase tracking-[0.2em] ${isExecuting ? 'bg-blue-500/10 text-blue-400 animate-pulse' : 'bg-green-500/10 text-green-400'}`}>
-                                {isExecuting ? 'Running' : 'Finished'}
-                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
-                            <div className="glass-card rounded-[32px] overflow-hidden flex flex-col min-h-[400px]">
-                                <div className="p-6 border-b border-white/5 flex items-center justify-between text-[8px] font-bold text-gray-500 uppercase tracking-widest">
-                                    <span>Screenshot</span>
-                                    <span className="text-white/20">{results?.timestamp || '--:--:--'}</span>
-                                </div>
-                                <div className="relative bg-black flex-1 flex items-center justify-center overflow-hidden">
-                                    {results?.screenshotUrl ? (
-                                        <img
-                                            src={results.screenshotUrl + '?t=' + Date.now()}
-                                            className="absolute inset-0 w-full h-full object-contain transition-opacity duration-1000"
-                                        />
-                                    ) : (
-                                        <div className="text-[8px] font-bold text-white/5 uppercase tracking-widest">Waiting for Frame...</div>
-                                    )}
-                                </div>
-                            </div>
-                            <div className="glass-card rounded-[32px] p-8 flex flex-col h-[400px]">
-                                <span className="text-[8px] font-bold text-gray-500 uppercase tracking-widest mb-6 border-b border-white/5 pb-4">Activity Log</span>
-                                <div className="flex-1 font-mono text-[10px] text-gray-400 space-y-2 overflow-y-auto custom-scrollbar pr-2">
-                                    {results?.logs?.map((log: string, i: number) => (
-                                        <div key={i} className="flex gap-2">
-                                            <span className="text-white/10 shrink-0"></span> <span>{log}</span>
-                                        </div>
-                                    ))}
-                                    {isExecuting && (!results?.logs || results?.logs.length === 0) && <div className="animate-pulse">Connecting to kernel...</div>}
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="glass-card rounded-[32px] p-8 flex flex-col">
+                <ResultsPane
+                    results={results}
+                    pinnedResults={pinnedResults}
+                    isExecuting={isExecuting}
+                    onConfirm={onConfirm}
+                    onNotify={onNotify}
+                    onPin={onPinResults}
+                    onUnpin={onUnpinResults}
+                />
+                {versionPreview && (
+                    <div className="fixed inset-0 z-[210] flex items-center justify-center bg-black/70 backdrop-blur-sm px-6">
+                        <div className="glass-card w-full max-w-6xl rounded-[32px] border border-white/10 p-8 shadow-2xl flex flex-col max-h-[90vh]">
                             <div className="flex items-center justify-between border-b border-white/5 pb-4 mb-6">
-                                <span className="text-[8px] font-bold text-gray-500 uppercase tracking-widest">Data</span>
-                                <button
-                                    onClick={async () => {
-                                        const payload = getResultsCopyPayload(results);
-                                        if (payload.reason) {
-                                            onNotify(payload.reason || 'Data too large to copy safely.', 'error');
-                                            return;
-                                        }
-                                        const preview = getResultsPreview(results);
-                                        const fullText = getFullCopyText(payload.raw);
-                                        let copyText = fullText;
-                                        let usedTruncated = false;
-
-                                        if (preview.truncated) {
-                                            const confirmed = await onConfirm({
-                                                message: 'Preview is truncated for performance.',
-                                                confirmLabel: 'Copy full',
-                                                cancelLabel: 'Copy preview'
-                                            });
-                                            if (!confirmed) {
-                                                copyText = preview.text || '';
-                                                usedTruncated = true;
-                                            }
-                                        }
-
-                                        if (copyText.length > MAX_COPY_CHARS) {
-                                            const proceed = await onConfirm({
-                                                message: `Copying ${formatSize(copyText.length)} may freeze your browser.`,
-                                                confirmLabel: 'Copy full',
-                                                cancelLabel: usedTruncated ? 'Copy preview' : 'Copy truncated'
-                                            });
-                                            if (!proceed) {
-                                                const truncated = getTruncatedCopyText(payload.raw);
-                                                copyText = truncated.text;
-                                                usedTruncated = true;
-                                            }
-                                        }
-
-                                        void handleCopy(copyText, 'data', { skipSizeConfirm: true, truncatedNotice: usedTruncated });
-                                    }}
-                                    className={`px-3 py-2 border text-[9px] font-bold rounded-xl uppercase transition-all flex items-center gap-2 ${copied === 'data' ? 'bg-green-500/10 border-green-500/20 text-green-400' : 'bg-white/5 border-white/10 text-white hover:bg-white/10'}`}
-                                    title="Copy extracted data"
-                                >
-                                    {copied === 'data' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                                    {copied === 'data' ? 'Copied' : 'Copy'}
-                                </button>
+                                <div className="space-y-1">
+                                    <div className="text-[9px] font-bold text-gray-500 uppercase tracking-[0.3em]">Task Snapshot</div>
+                                    <div className="text-lg font-bold text-white">{versionPreview.snapshot.name}</div>
+                                    <div className="text-[8px] text-gray-500 uppercase tracking-[0.2em]">
+                                        {new Date(versionPreview.timestamp).toLocaleString()} | {versionPreview.snapshot.mode}
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={() => setVersionPreview(null)}
+                                        className="px-4 py-2 text-[9px] font-bold uppercase tracking-widest rounded-xl bg-white/5 border border-white/10 text-white hover:bg-white/10 transition-all"
+                                    >
+                                        Close
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            if (onRunSnapshot) onRunSnapshot(versionPreview.snapshot);
+                                            setVersionPreview(null);
+                                        }}
+                                        className="px-4 py-2 text-[9px] font-bold uppercase tracking-widest rounded-xl bg-white text-black hover:bg-white/90 transition-all"
+                                    >
+                                        Run Version
+                                    </button>
+                                </div>
                             </div>
-                            <div className="max-h-[400px] overflow-y-auto custom-scrollbar pr-2">
-                                {(() => {
-                                    if (isExecuting && (!results || results.data === undefined)) {
-                                        return <pre className="font-mono text-[10px] text-blue-300/60 whitespace-pre-wrap leading-relaxed">Buffering data stream...</pre>;
-                                    }
-                                    if (!results || results.data === undefined || results.data === null || results.data === '') {
-                                        return <pre className="font-mono text-[10px] text-blue-300/60 whitespace-pre-wrap leading-relaxed">No intelligence gathered.</pre>;
-                                    }
-                                    const preview = getResultsPreview(results);
-                                    return (
-                                        <div className="space-y-2">
-                                            {preview.truncated && (
-                                                <div className="text-[8px] text-amber-300/80 uppercase tracking-widest">
-                                                    Preview truncated for performance.
-                                                </div>
-                                            )}
-                                            <CodeEditor readOnly value={preview.text} language={preview.language} />
-                                        </div>
-                                    );
-                                })()}
+                            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 overflow-y-auto custom-scrollbar pr-2 flex-1 min-h-0">
+                                <div className="space-y-2">
+                                    <div className="text-[8px] font-bold text-gray-500 uppercase tracking-widest">Snapshot JSON</div>
+                                    <CodeEditor
+                                        readOnly
+                                        value={JSON.stringify(versionPreview.snapshot, null, 2)}
+                                        language="json"
+                                        className="min-h-[320px]"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <div className="text-[8px] font-bold text-gray-500 uppercase tracking-widest">Output</div>
+                                    <div className="glass-card rounded-2xl p-6 border border-white/10 text-[10px] text-gray-500">
+                                        No output captured for this snapshot yet. Run this version to see results.
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>

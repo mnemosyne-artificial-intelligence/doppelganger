@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { RefreshCw, Trash2, Monitor, Cloud } from 'lucide-react';
 import { Execution, ConfirmRequest } from '../types';
 
@@ -8,6 +9,7 @@ interface ExecutionsScreenProps {
 }
 
 const ExecutionsScreen: React.FC<ExecutionsScreenProps> = ({ onConfirm, onNotify }) => {
+    const navigate = useNavigate();
     const [executions, setExecutions] = useState<Execution[]>([]);
     const [filter, setFilter] = useState<'all' | 'editor' | 'api'>('all');
     const [loading, setLoading] = useState(false);
@@ -61,7 +63,7 @@ const ExecutionsScreen: React.FC<ExecutionsScreenProps> = ({ onConfirm, onNotify
 
     return (
         <main className="flex-1 p-12 overflow-y-auto custom-scrollbar animate-in fade-in duration-500">
-            <div className="max-w-5xl mx-auto space-y-8">
+            <div className="w-full space-y-8">
                 <div className="flex items-end justify-between">
                     <div className="space-y-2">
                         <p className="text-[10px] font-bold text-blue-400 uppercase tracking-[0.4em]">Executions</p>
@@ -105,7 +107,11 @@ const ExecutionsScreen: React.FC<ExecutionsScreenProps> = ({ onConfirm, onNotify
 
                 <div className="space-y-3">
                     {filtered.map((exec) => (
-                        <div key={exec.id} className="glass-card rounded-2xl p-5 flex items-center gap-4">
+                        <button
+                            key={exec.id}
+                            onClick={() => navigate(`/executions/${exec.id}`)}
+                            className="glass-card w-full rounded-2xl p-5 flex items-center gap-4 text-left hover:bg-white/[0.06] transition-all"
+                        >
                             <div className="w-10 h-10 rounded-2xl bg-white/5 flex items-center justify-center text-gray-400">
                                 {exec.source === 'api' ? <Cloud className="w-5 h-5" /> : <Monitor className="w-5 h-5" />}
                             </div>
@@ -114,7 +120,7 @@ const ExecutionsScreen: React.FC<ExecutionsScreenProps> = ({ onConfirm, onNotify
                                     {exec.taskName || exec.mode}
                                 </div>
                                 <div className="text-[8px] text-gray-500 uppercase tracking-[0.2em]">
-                                    {new Date(exec.timestamp).toLocaleString()} • {exec.source} • {exec.mode} • {exec.status} • {exec.durationMs}ms
+                                    {new Date(exec.timestamp).toLocaleString()} | {exec.source} | {exec.mode} | {exec.status} | {exec.durationMs}ms
                                 </div>
                                 {exec.url && (
                                     <div className="text-[9px] text-white/50 truncate font-mono">
@@ -123,12 +129,15 @@ const ExecutionsScreen: React.FC<ExecutionsScreenProps> = ({ onConfirm, onNotify
                                 )}
                             </div>
                             <button
-                                onClick={() => deleteExecution(exec.id)}
+                                onClick={(event) => {
+                                    event.stopPropagation();
+                                    deleteExecution(exec.id);
+                                }}
                                 className="px-4 py-2 text-[9px] font-bold uppercase tracking-widest rounded-xl bg-red-500/5 border border-red-500/10 text-red-400 hover:bg-red-500/10 transition-all"
                             >
                                 Delete
                             </button>
-                        </div>
+                        </button>
                     ))}
                 </div>
             </div>

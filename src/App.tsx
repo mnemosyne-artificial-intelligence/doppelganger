@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Routes, Route, useNavigate, useParams, useLocation } from 'react-router-dom';
+import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { User, Task, ViewMode, Results, ConfirmRequest } from './types';
 import Sidebar from './components/Sidebar';
 import AuthScreen from './components/AuthScreen';
@@ -8,7 +8,11 @@ import EditorScreen from './components/EditorScreen';
 import SettingsScreen from './components/SettingsScreen';
 import LoadingScreen from './components/LoadingScreen';
 import ExecutionsScreen from './components/ExecutionsScreen';
+import ExecutionDetailScreen from './components/ExecutionDetailScreen';
 import NotFoundScreen from './components/NotFoundScreen';
+import CenterAlert from './components/app/CenterAlert';
+import CenterConfirm from './components/app/CenterConfirm';
+import EditorLoader from './components/app/EditorLoader';
 
 export default function App() {
     const navigate = useNavigate();
@@ -27,6 +31,7 @@ export default function App() {
     const [editorView, setEditorView] = useState<ViewMode>('visual');
     const [isExecuting, setIsExecuting] = useState(false);
     const [results, setResults] = useState<Results | null>(null);
+    const [pinnedResultsByTask, setPinnedResultsByTask] = useState<Record<string, Results>>({});
     const [saveMsg, setSaveMsg] = useState('');
 
     const [centerAlert, setCenterAlert] = useState<{ message: string; tone?: 'success' | 'error' } | null>(null);
@@ -57,6 +62,11 @@ export default function App() {
         if (resolver) resolver(result);
     };
     const formatLabel = (value: string) => value ? value[0].toUpperCase() + value.slice(1) : value;
+
+    const pinnedResultsKey = 'doppelganger.pinnedResults';
+    const getTaskKey = (task?: Task | null) => task?.id ? String(task.id) : 'new';
+    const currentTaskKey = getTaskKey(currentTask);
+    const pinnedResults = currentTask ? pinnedResultsByTask[currentTaskKey] || null : null;
 
     const formatExecutionError = (rawMessage: string, mode?: string) => {
         const message = String(rawMessage || '').trim();
@@ -108,7 +118,8 @@ export default function App() {
             naturalTyping: false
         },
         actions: [],
-        variables: {}
+        variables: {},
+        includeShadowDom: true
     } as Task);
 
 
@@ -117,10 +128,40 @@ export default function App() {
     }, []);
 
     useEffect(() => {
+        try {
+            const stored = localStorage.getItem(pinnedResultsKey);
+            if (stored) {
+                const parsed = JSON.parse(stored);
+                if (parsed && typeof parsed === 'object') {
+                    setPinnedResultsByTask(parsed);
+                }
+            }
+        } catch {
+            // ignore
+        }
+    }, []);
+
+    useEffect(() => {
+        try {
+            localStorage.setItem(pinnedResultsKey, JSON.stringify(pinnedResultsByTask));
+        } catch {
+            // ignore
+        }
+    }, [pinnedResultsByTask]);
+
+    useEffect(() => {
         if (!location.pathname.startsWith('/tasks') && editorView === 'history') {
             setEditorView('visual');
         }
     }, [location.pathname, editorView]);
+
+    useEffect(() => {
+        if (location.pathname === '/tasks/new' && !currentTask) {
+            const newTask = buildNewTask();
+            setCurrentTask(newTask);
+            setResults(null);
+        }
+    }, [location.pathname, currentTask]);
 
     const checkAuth = async () => {
         try {
@@ -193,11 +234,11 @@ export default function App() {
         showAlert('Logged out.', 'success');
     };
 
-    const createNewTask = () => {
-        const newTask: Task = {
+    function buildNewTask(): Task {
+        return {
             name: "Task " + Math.floor(Math.random() * 100),
             url: "",
-            mode: "scrape",
+            mode: "agent",
             wait: 3,
             selector: "",
             rotateUserAgents: false,
@@ -211,11 +252,31 @@ export default function App() {
                 naturalTyping: false
             },
             actions: [],
-            variables: {}
+            variables: {},
+            extractionFormat: 'json',
+            includeShadowDom: true
         };
+    }
+
+    const createNewTask = () => {
+        const newTask = buildNewTask();
         setCurrentTask(newTask);
         setResults(null);
         navigate('/tasks/new');
+    };
+
+    const pinResults = (data: Results) => {
+        if (!currentTask) return;
+        setPinnedResultsByTask((prev) => ({ ...prev, [currentTaskKey]: data }));
+    };
+
+    const unpinResults = () => {
+        if (!currentTask) return;
+        setPinnedResultsByTask((prev) => {
+            const next = { ...prev };
+            delete next[currentTaskKey];
+            return next;
+        });
     };
 
     const touchTask = async (id: string) => {
@@ -240,7 +301,8 @@ export default function App() {
                 naturalTyping: false
             };
         }
-        if ('includeShadowDom' in migratedTask) delete (migratedTask as any).includeShadowDom;
+        if (!migratedTask.extractionFormat) migratedTask.extractionFormat = 'json';
+        if (migratedTask.includeShadowDom === undefined) migratedTask.includeShadowDom = true;
         setCurrentTask(migratedTask);
         setResults(null);
         navigate(`/tasks/${task.id}`);
@@ -284,17 +346,18 @@ export default function App() {
         }
     };
 
-    const runTask = async () => {
-        if (!currentTask || !currentTask.url) return;
+    const runTaskWithSnapshot = async (taskOverride?: Task) => {
+        const taskToRun = taskOverride || currentTask;
+        if (!taskToRun || !taskToRun.url) return;
 
-        if (isExecuting && currentTask.mode === 'headful') {
+        if (isExecuting && taskToRun.mode === 'headful') {
             await stopHeadful();
             return;
         }
 
         setIsExecuting(true);
         setResults({
-            url: currentTask.url,
+            url: taskToRun.url,
             logs: [],
             timestamp: 'Running...',
         });
@@ -303,7 +366,7 @@ export default function App() {
 
         try {
             const cleanedVars: Record<string, any> = {};
-            Object.entries(currentTask.variables).forEach(([name, def]) => {
+            Object.entries(taskToRun.variables).forEach(([name, def]) => {
                 cleanedVars[name] = def.value;
             });
 
@@ -321,16 +384,19 @@ export default function App() {
                 return resolveTemplate(value);
             };
 
+            const shouldResolve = taskToRun.mode !== 'agent';
             const resolvedTask = {
-                ...currentTask,
-                url: resolveTemplate(currentTask.url || ''),
-                selector: resolveMaybe(currentTask.selector),
-                actions: currentTask.actions.map((action) => ({
-                    ...action,
-                    selector: resolveMaybe(action.selector),
-                    value: resolveMaybe(action.value),
-                    key: resolveMaybe(action.key)
-                }))
+                ...taskToRun,
+                url: shouldResolve ? resolveTemplate(taskToRun.url || '') : (taskToRun.url || ''),
+                selector: shouldResolve ? resolveMaybe(taskToRun.selector) : taskToRun.selector,
+                actions: shouldResolve
+                    ? taskToRun.actions.map((action) => ({
+                        ...action,
+                        selector: resolveMaybe(action.selector),
+                        value: resolveMaybe(action.value),
+                        key: resolveMaybe(action.key)
+                    }))
+                    : taskToRun.actions
             };
 
             payload = {
@@ -338,8 +404,9 @@ export default function App() {
                 taskVariables: cleanedVars,
                 variables: cleanedVars,
                 runSource: 'editor',
-                taskId: currentTask.id,
-                taskName: currentTask.name
+                taskId: taskToRun.id,
+                taskName: taskToRun.name,
+                taskSnapshot: taskToRun
             };
 
             const executeTask = async (mode: 'scrape' | 'agent' | 'headful') => {
@@ -364,10 +431,10 @@ export default function App() {
                 return res.json();
             };
 
-            const data = await executeTask(currentTask.mode);
+            const data = await executeTask(taskToRun.mode);
 
             setResults({
-                url: currentTask.url,
+                url: taskToRun.url,
                 finalUrl: data.final_url,
                 html: data.html,
                 data: data.data ?? data.html ?? "No data captured.",
@@ -377,7 +444,7 @@ export default function App() {
             });
         } catch (e: any) {
             if (
-                currentTask?.mode === 'headful'
+                taskToRun?.mode === 'headful'
                 && payload
                 && (e?.code === 'HEADFUL_DISPLAY_UNAVAILABLE' || isDisplayUnavailable(e?.message || String(e)))
             ) {
@@ -396,7 +463,7 @@ export default function App() {
                     })();
                     data.logs = [`Headful display unavailable; ran headless instead.`, ...(data.logs || [])];
                     setResults({
-                        url: currentTask.url,
+                        url: taskToRun.url,
                         finalUrl: data.final_url,
                         html: data.html,
                         data: data.data ?? data.html ?? "No data captured.",
@@ -407,22 +474,26 @@ export default function App() {
                     setIsExecuting(false);
                     return;
                 } catch (fallbackError: any) {
-                    const errorMessage = formatExecutionError(fallbackError?.message || String(fallbackError), currentTask?.mode);
+                    const errorMessage = formatExecutionError(fallbackError?.message || String(fallbackError), taskToRun?.mode);
                     showAlert(`Execution crash: ${errorMessage}`, 'error');
                     setIsExecuting(false);
                     return;
                 }
             }
-            const errorMessage = formatExecutionError(e?.message || String(e), currentTask?.mode);
+            const errorMessage = formatExecutionError(e?.message || String(e), taskToRun?.mode);
             showAlert(`Execution crash: ${errorMessage}`, 'error');
-            if (currentTask?.mode === 'headful') {
+            if (taskToRun?.mode === 'headful') {
                 setIsExecuting(false);
             }
         } finally {
-            if (currentTask.mode !== 'headful') {
+            if (taskToRun.mode !== 'headful') {
                 setIsExecuting(false);
             }
         }
+    };
+
+    const runTask = async () => {
+        await runTaskWithSnapshot();
     };
 
     const clearStorage = async (type: 'screenshots' | 'cookies') => {
@@ -540,19 +611,24 @@ export default function App() {
                         <EditorScreen
                             currentTask={currentTask}
                             setCurrentTask={setCurrentTask}
+                            tasks={tasks}
                             editorView={editorView}
                             setEditorView={setEditorView}
                             isExecuting={isExecuting}
                             onSave={saveTask}
                             onRun={runTask}
+                            onRunSnapshot={runTaskWithSnapshot}
                             results={results}
+                            pinnedResults={pinnedResults}
                             saveMsg={saveMsg}
                             onConfirm={requestConfirm}
                             onNotify={showAlert}
+                            onPinResults={pinResults}
+                            onUnpinResults={unpinResults}
                         />
                         ) : <LoadingScreen title="Initializing" subtitle="Preparing task workspace" />
                     } />
-                    <Route path="/tasks/:id" element={<EditorLoader tasks={tasks} loadTasks={loadTasks} touchTask={touchTask} currentTask={currentTask} setCurrentTask={setCurrentTask} editorView={editorView} setEditorView={setEditorView} isExecuting={isExecuting} onSave={saveTask} onRun={runTask} results={results} saveMsg={saveMsg} onConfirm={requestConfirm} onNotify={showAlert} />} />
+                    <Route path="/tasks/:id" element={<EditorLoader tasks={tasks} loadTasks={loadTasks} touchTask={touchTask} currentTask={currentTask} setCurrentTask={setCurrentTask} editorView={editorView} setEditorView={setEditorView} isExecuting={isExecuting} onSave={saveTask} onRun={runTask} onRunSnapshot={runTaskWithSnapshot} results={results} pinnedResults={pinnedResults} saveMsg={saveMsg} onConfirm={requestConfirm} onNotify={showAlert} onPinResults={pinResults} onUnpinResults={unpinResults} />} />
                     <Route path="/settings" element={
                         <SettingsScreen
                             onClearStorage={clearStorage}
@@ -561,6 +637,7 @@ export default function App() {
                         />
                     } />
                     <Route path="/executions" element={<ExecutionsScreen onConfirm={requestConfirm} onNotify={showAlert} />} />
+                    <Route path="/executions/:id" element={<ExecutionDetailScreen onConfirm={requestConfirm} onNotify={showAlert} />} />
                     <Route path="*" element={<NotFoundScreen onBack={() => navigate('/dashboard')} />} />
                 </Routes>
             </div>
@@ -570,98 +647,19 @@ export default function App() {
     return (
         <div className="h-full">
             {centerAlert && (
-                <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm px-6">
-                    <div className="glass-card w-full max-w-md rounded-[32px] border border-white/10 p-8 text-center shadow-2xl">
-                        <p className="text-[10px] font-bold uppercase tracking-[0.4em] text-gray-500">System Alert</p>
-                        <p className="mt-4 font-mono text-sm text-white">{centerAlert.message}</p>
-                        <button
-                            onClick={() => setCenterAlert(null)}
-                            className={`mt-6 w-full rounded-2xl px-6 py-3 text-[9px] font-bold uppercase tracking-[0.3em] transition-all ${centerAlert.tone === 'error'
-                                ? 'bg-red-500/10 border border-red-500/20 text-red-300 hover:bg-red-500/20'
-                                : 'bg-white/10 border border-white/20 text-white hover:bg-white/20'
-                                }`}
-                        >
-                            Dismiss
-                        </button>
-                    </div>
-                </div>
+                <CenterAlert
+                    message={centerAlert.message}
+                    tone={centerAlert.tone}
+                    onClose={() => setCenterAlert(null)}
+                />
             )}
             {centerConfirm && (
-                <div className="fixed inset-0 z-[201] flex items-center justify-center bg-black/70 backdrop-blur-sm px-6">
-                    <div className="glass-card w-full max-w-md rounded-[32px] border border-white/10 p-8 text-center shadow-2xl">
-                        <p className="text-[10px] font-bold uppercase tracking-[0.4em] text-gray-500">{centerConfirm.title ?? 'Confirm'}</p>
-                        <p className="mt-4 font-mono text-sm text-white">{centerConfirm.message}</p>
-                        <div className="mt-6 flex gap-4">
-                            <button
-                                onClick={() => closeConfirm(false)}
-                                className="w-full rounded-2xl px-6 py-3 text-[9px] font-bold uppercase tracking-[0.3em] transition-all bg-white/5 border border-white/10 text-gray-300 hover:bg-white/10"
-                            >
-                                {centerConfirm.cancelLabel ?? 'Cancel'}
-                            </button>
-                            <button
-                                onClick={() => closeConfirm(true)}
-                                className="w-full rounded-2xl px-6 py-3 text-[9px] font-bold uppercase tracking-[0.3em] transition-all bg-white text-black hover:scale-105 shadow-xl shadow-white/10"
-                            >
-                                {centerConfirm.confirmLabel ?? 'Confirm'}
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                <CenterConfirm
+                    request={centerConfirm}
+                    onResolve={closeConfirm}
+                />
             )}
             {content}
         </div>
     );
-}
-
-function EditorLoader({ tasks, loadTasks, touchTask, currentTask, setCurrentTask, ...props }: any) {
-    const { id } = useParams();
-    const navigate = useNavigate();
-    const [loading, setLoading] = useState(false);
-    const [notFound, setNotFound] = useState(false);
-
-    useEffect(() => {
-        const init = async () => {
-            if (currentTask?.id === id) return;
-
-            setLoading(true);
-            setNotFound(false);
-            let targetTasks = tasks;
-            if (tasks.length === 0) {
-                targetTasks = await loadTasks();
-            }
-
-            const task = targetTasks.find((t: any) => String(t.id) === String(id));
-            if (task) {
-                // Migration logic
-                const migrated = { ...task };
-                if (!migrated.variables || Array.isArray(migrated.variables)) migrated.variables = {};
-                if (!migrated.stealth) {
-                    migrated.stealth = { allowTypos: false, idleMovements: false, overscroll: false, deadClicks: false, fatigue: false, naturalTyping: false };
-                }
-                if ('includeShadowDom' in migrated) delete (migrated as any).includeShadowDom;
-                setCurrentTask(migrated);
-                if (id) touchTask(id);
-            } else {
-                setNotFound(true);
-            }
-            setLoading(false);
-        };
-        init();
-    }, [id, tasks]);
-
-    if (notFound) {
-        return (
-            <NotFoundScreen
-                title="Task Not Found"
-                subtitle="This task does not exist or was deleted."
-                onBack={() => navigate('/dashboard')}
-            />
-        );
-    }
-
-    if (loading || !currentTask || String(currentTask.id) !== String(id)) {
-        return <LoadingScreen title="Loading Mission Data" subtitle="Syncing task payload" />;
-    }
-
-    return <EditorScreen currentTask={currentTask} setCurrentTask={setCurrentTask} {...props} />;
 }

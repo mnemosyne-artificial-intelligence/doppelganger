@@ -27,30 +27,24 @@ const CodeEditor: React.FC<CodeEditorProps> = ({ value, onChange, language, plac
             pre.scrollTop = textarea.scrollTop;
             pre.scrollLeft = textarea.scrollLeft;
         };
+        const syncFromPre = () => {
+            textarea.scrollTop = pre.scrollTop;
+            textarea.scrollLeft = pre.scrollLeft;
+        };
         textarea.addEventListener('scroll', syncScroll);
+        pre.addEventListener('scroll', syncFromPre);
         return () => {
             textarea.removeEventListener('scroll', syncScroll);
+            pre.removeEventListener('scroll', syncFromPre);
         };
     }, []);
 
     return (
-        <div
-            className={`code-editor ${className || ''}`}
-            onWheel={(event) => {
-                const textarea = textareaRef.current;
-                if (!textarea) return;
-                if (textarea.scrollHeight <= textarea.clientHeight) return;
-                textarea.scrollTop += event.deltaY;
-                textarea.scrollLeft += event.deltaX;
-                textarea.focus();
-                event.preventDefault();
-            }}
-        >
+        <div className={`code-editor ${className || ''}`}>
             <pre
                 ref={preRef}
                 className={`code-editor-pre ${isPlaceholder ? 'code-editor-placeholder' : ''}`}
-                aria-hidden
-                dangerouslySetInnerHTML={{ __html: highlighted }}
+                dangerouslySetInnerHTML={{ __html: highlighted + (displayValue.endsWith('\n') ? '\n' : '') }}
             />
             <textarea
                 ref={textareaRef}

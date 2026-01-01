@@ -22,55 +22,6 @@ const userAgents = [
     'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
 ];
 
-const csvEscape = (value) => {
-    const text = value === undefined || value === null ? '' : String(value);
-    if (/[",\n\r]/.test(text) || /^\s|\s$/.test(text)) {
-        return `"${text.replace(/"/g, '""')}"`;
-    }
-    return text;
-};
-
-const toCsvString = (raw) => {
-    if (raw === undefined || raw === null) return '';
-    if (typeof raw === 'string') {
-        const trimmed = raw.trim();
-        if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-            try {
-                return toCsvString(JSON.parse(trimmed));
-            } catch {
-                return raw;
-            }
-        }
-        return raw;
-    }
-    const rows = Array.isArray(raw) ? raw : [raw];
-    if (rows.length === 0) return '';
-
-    const allKeys = [];
-    rows.forEach((row) => {
-        if (row && typeof row === 'object' && !Array.isArray(row)) {
-            Object.keys(row).forEach((key) => {
-                if (!allKeys.includes(key)) allKeys.push(key);
-            });
-        }
-    });
-
-    if (allKeys.length === 0) {
-        const lines = rows.map((row) => {
-            if (Array.isArray(row)) return row.map(csvEscape).join(',');
-            return csvEscape(row);
-        });
-        return lines.join('\n');
-    }
-
-    const headerLine = allKeys.map(csvEscape).join(',');
-    const lines = rows.map((row) => {
-        const obj = row && typeof row === 'object' ? row : {};
-        return allKeys.map((key) => csvEscape(obj[key])).join(',');
-    });
-    return [headerLine, ...lines].join('\n');
-};
-
 async function handleScrape(req, res) {
     const url = req.body.url || req.query.url;
     const customHeaders = req.body.headers || {};
@@ -78,12 +29,8 @@ async function handleScrape(req, res) {
     const waitInput = req.body.wait || req.query.wait;
     const waitTime = waitInput ? parseFloat(waitInput) * 1000 : 2000;
     const rotateUserAgents = req.body.rotateUserAgents || req.query.rotateUserAgents || false;
-    const includeShadowDomRaw = req.body.includeShadowDom ?? req.query.includeShadowDom;
-    const includeShadowDom = includeShadowDomRaw === undefined
-        ? true
-        : !(String(includeShadowDomRaw).toLowerCase() === 'false' || includeShadowDomRaw === false);
+    const includeShadowDom = true;
     const extractionScript = req.body.extractionScript || req.query.extractionScript;
-    const extractionFormat = (req.body.extractionFormat || req.query.extractionFormat) === 'csv' ? 'csv' : 'json';
 
     if (!url) {
         return res.status(400).json({ error: 'URL is required.' });
@@ -132,16 +79,6 @@ async function handleScrape(req, res) {
         await context.addInitScript(() => {
             Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
         });
-        if (includeShadowDom) {
-            await context.addInitScript(() => {
-                if (!Element.prototype.attachShadow) return;
-                const original = Element.prototype.attachShadow;
-                Element.prototype.attachShadow = function (init) {
-                    const options = init ? { ...init, mode: 'open' } : { mode: 'open' };
-                    return original.call(this, options);
-                };
-            });
-        }
 
         const page = await context.newPage();
 
@@ -249,7 +186,7 @@ async function handleScrape(req, res) {
             }, includeShadowDom);
         }
 
-        const runExtractionScript = async (script, html, pageUrl) => {
+        const runExtractionScript = async (script, html) => {
             if (!script || typeof script !== 'string') return { result: undefined, logs: [] };
             try {
                 const dom = new JSDOM(html || '');
@@ -318,7 +255,6 @@ async function handleScrape(req, res) {
                 );
                 const $$data = {
                     html: () => html || '',
-                    url: () => pageUrl || '',
                     window,
                     document: window.document,
                     shadowQueryAll: includeShadowDom ? shadowHelpers.shadowQueryAll : undefined,
@@ -331,7 +267,7 @@ async function handleScrape(req, res) {
             }
         };
 
-        const extraction = await runExtractionScript(extractionScript, productHtml, page.url());
+        const extraction = await runExtractionScript(extractionScript, productHtml);
 
         // Ensure the public/screenshots directory exists
         const screenshotsDir = path.join(__dirname, 'public', 'screenshots');
@@ -358,14 +294,11 @@ async function handleScrape(req, res) {
             }).trim();
         };
 
-        const rawExtraction = extraction.result !== undefined ? extraction.result : (extraction.logs.length ? extraction.logs.join('\n') : undefined);
-        const formattedExtraction = extractionFormat === 'csv' ? toCsvString(rawExtraction) : rawExtraction;
-
         const data = {
             title: await page.title(),
             url: page.url(),
             html: formatHTML(productHtml),
-            data: formattedExtraction,
+            data: extraction.result !== undefined ? extraction.result : (extraction.logs.length ? extraction.logs.join('\n') : undefined),
             is_partial: !usedFallback,
             selector_used: usedFallback ? (userSelector ? `${userSelector} (not found, using body)` : 'body (default)') : userSelector,
             links: await page.$$eval('a[href]', elements => {

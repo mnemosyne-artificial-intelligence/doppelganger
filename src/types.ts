@@ -18,35 +18,11 @@ export interface StealthConfig {
 
 export interface Action {
     id: string;
-    type:
-        | 'click'
-        | 'type'
-        | 'wait'
-        | 'press'
-        | 'scroll'
-        | 'javascript'
-        | 'csv'
-        | 'hover'
-        | 'merge'
-        | 'if'
-        | 'else'
-        | 'end'
-        | 'while'
-        | 'repeat'
-        | 'foreach'
-        | 'stop'
-        | 'set'
-        | 'on_error'
-        | 'start';
+    type: 'click' | 'type' | 'wait' | 'press' | 'scroll' | 'javascript' | 'hover';
     selector?: string;
     value?: string;
     key?: string;
     disabled?: boolean;
-    varName?: string;
-    conditionVar?: string;
-    conditionVarType?: VarType;
-    conditionOp?: string;
-    conditionValue?: string;
 }
 
 export interface Task {
@@ -63,8 +39,6 @@ export interface Task {
     variables: Record<string, Variable>;
     last_opened?: number;
     extractionScript?: string;
-    extractionFormat?: 'json' | 'csv';
-    includeShadowDom?: boolean;
     versions?: TaskVersion[];
 }
 
@@ -96,8 +70,6 @@ export interface Execution {
     taskId?: string | null;
     taskName?: string | null;
     url?: string | null;
-    taskSnapshot?: Task | null;
-    result?: any;
 }
 
 export interface User {

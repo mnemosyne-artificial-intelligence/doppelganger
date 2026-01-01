@@ -137,11 +137,6 @@ function registerExecution(req, res, baseMeta = {}) {
     const start = Date.now();
     const requestId = 'exec_' + start + '_' + Math.floor(Math.random() * 1000);
     res.locals.executionId = requestId;
-    const originalJson = res.json.bind(res);
-    res.json = (body) => {
-        res.locals.executionResult = body;
-        return originalJson(body);
-    };
     res.on('finish', () => {
         const durationMs = Date.now() - start;
         const body = req.body || {};
@@ -156,9 +151,7 @@ function registerExecution(req, res, baseMeta = {}) {
             mode: body.mode || baseMeta.mode || 'unknown',
             taskId: body.taskId || baseMeta.taskId || null,
             taskName: body.name || baseMeta.taskName || null,
-            url: body.url || req.query.url || null,
-            taskSnapshot: body.taskSnapshot || null,
-            result: res.locals.executionResult || null
+            url: body.url || req.query.url || null
         };
         appendExecution(entry);
     });
@@ -412,12 +405,6 @@ app.get('/api/executions', requireAuth, (req, res) => {
     const executions = loadExecutions();
     res.json({ executions });
 });
-app.get('/api/executions/:id', requireAuth, (req, res) => {
-    const executions = loadExecutions();
-    const exec = executions.find(e => e.id === req.params.id);
-    if (!exec) return res.status(404).json({ error: 'EXECUTION_NOT_FOUND' });
-    res.json({ execution: exec });
-});
 
 app.post('/api/executions/clear', requireAuth, (req, res) => {
     saveExecutions([]);
@@ -442,15 +429,6 @@ app.get('/api/tasks/:id/versions', requireAuth, (req, res) => {
         mode: v.snapshot?.mode || task.mode
     }));
     res.json({ versions });
-});
-app.get('/api/tasks/:id/versions/:versionId', requireAuth, (req, res) => {
-    const tasks = loadTasks();
-    const task = tasks.find(t => t.id === req.params.id);
-    if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
-    const versions = task.versions || [];
-    const version = versions.find(v => v.id === req.params.versionId);
-    if (!version || !version.snapshot) return res.status(404).json({ error: 'VERSION_NOT_FOUND' });
-    res.json({ snapshot: version.snapshot, metadata: { id: version.id, timestamp: version.timestamp } });
 });
 
 app.post('/api/tasks/:id/versions/clear', requireAuth, (req, res) => {
@@ -584,8 +562,6 @@ app.post('/tasks/:id/api', requireApiKey, async (req, res) => {
         url: resolveTemplate(task.url || ''),
         selector: resolveTemplate(task.selector),
         extractionScript: resolveTemplate(task.extractionScript || ''),
-        extractionFormat: task.extractionFormat || 'json',
-        includeShadowDom: task.includeShadowDom !== undefined ? task.includeShadowDom : true,
         actions: Array.isArray(task.actions)
             ? task.actions.map((action) => ({
                 ...action,
@@ -660,14 +636,6 @@ app.get('/tasks/:id', requireAuth, (req, res) => {
 
 // Settings
 app.get('/settings', requireAuth, (req, res) => {
-    res.sendFile(path.join(DIST_DIR, 'index.html'));
-});
-
-// Executions (SPA routes)
-app.get('/executions', requireAuth, (req, res) => {
-    res.sendFile(path.join(DIST_DIR, 'index.html'));
-});
-app.get('/executions/:id', requireAuth, (req, res) => {
     res.sendFile(path.join(DIST_DIR, 'index.html'));
 });
 

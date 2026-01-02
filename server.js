@@ -686,6 +686,14 @@ app.all('/agent', requireAuth, (req, res) => {
 });
 app.post('/headful', requireAuth, (req, res) => {
     registerExecution(req, res, { mode: 'headful' });
+    if (req.body && typeof req.body.url === 'string') {
+        const vars = req.body.taskVariables || req.body.variables || {};
+        req.body.url = req.body.url.replace(/\{\$(\w+)\}/g, (_match, name) => {
+            const value = vars[name];
+            if (value === undefined || value === null) return '';
+            return String(value);
+        });
+    }
     return handleHeadful(req, res);
 });
 app.post('/headful/stop', requireAuth, stopHeadful);

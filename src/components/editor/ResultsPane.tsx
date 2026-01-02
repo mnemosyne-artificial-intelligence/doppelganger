@@ -339,8 +339,8 @@ const ResultsPane: React.FC<ResultsPaneProps> = ({ results, pinnedResults, isExe
     };
 
     if (isHeadful && resultView === 'latest') {
-        const { protocol, hostname } = window.location;
-        const headfulUrl = `${protocol}//${hostname}:54311/vnc.html?host=${hostname}&port=54311&path=websockify&autoconnect=true&reconnect=true&resize=scale`;
+        const { origin, hostname } = window.location;
+        const headfulUrl = `${origin}/novnc.html?host=${hostname}&port=54311&path=websockify`;
         return (
             <div className="glass-card rounded-[32px] overflow-hidden h-[75vh] relative">
                 <iframe

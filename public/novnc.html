@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1"
+    />
+    <title>Headful Browser</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        background: #050505;
+        overflow: hidden;
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
+      }
+      #screen {
+        width: 100%;
+        height: 100%;
+      }
+      #status {
+        position: absolute;
+        top: 12px;
+        left: 12px;
+        background: rgba(0, 0, 0, 0.6);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        padding: 6px 10px;
+        border-radius: 10px;
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #d1d5db;
+        pointer-events: none;
+      }
+      #status.hidden {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="status">Connecting…</div>
+    <div id="screen"></div>
+    <script type="module">
+      import RFB from '/novnc/core/rfb.js';
+
+      const params = new URLSearchParams(window.location.search);
+      const host = params.get('host') || window.location.hostname;
+      const port = params.get('port') || '54311';
+      const path = params.get('path') || 'websockify';
+      const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      const wsUrl = `${proto}://${host}:${port}/${path}`;
+
+      const statusEl = document.getElementById('status');
+      const screen = document.getElementById('screen');
+      const rfb = new RFB(screen, wsUrl);
+      rfb.scaleViewport = true;
+      rfb.resizeSession = true;
+      rfb.showDotCursor = false;
+
+      rfb.addEventListener('connect', () => {
+        statusEl.classList.add('hidden');
+      });
+      rfb.addEventListener('disconnect', () => {
+        statusEl.classList.remove('hidden');
+        statusEl.textContent = 'Disconnected';
+      });
+    </script>
+  </body>
+</html>

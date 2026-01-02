@@ -696,6 +696,21 @@ if (!fs.existsSync(screenshotsDir)) {
     fs.mkdirSync(screenshotsDir, { recursive: true });
 }
 
+const novncDirCandidates = [
+    '/opt/novnc',
+    '/usr/share/novnc'
+];
+const novncDir = novncDirCandidates.find((candidate) => {
+    try {
+        return fs.existsSync(candidate);
+    } catch {
+        return false;
+    }
+});
+if (novncDir) {
+    app.use('/novnc', express.static(novncDir));
+}
+
 app.use('/screenshots', express.static(screenshotsDir));
 app.use(express.static(DIST_DIR));
 

@@ -2,7 +2,7 @@ name: Publish Docker Image
 
 on:
   push:
-    branches: ['main']
+    branches: ['main', 'beta']
     tags: ['v*']
 
 env:
@@ -47,6 +47,7 @@ jobs:
             ${{ env.D_HUB_TOKEN != '' && env.D_HUB_REPO || '' }}
           tags: |
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=beta,enable=${{ github.ref == 'refs/heads/beta' }}
             type=semver,pattern={{version}}
 
       - name: Build and push Docker image

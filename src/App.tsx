@@ -33,10 +33,12 @@ export default function App() {
     const [results, setResults] = useState<Results | null>(null);
     const [pinnedResultsByTask, setPinnedResultsByTask] = useState<Record<string, Results>>({});
     const [saveMsg, setSaveMsg] = useState('');
+    const [activeRunId, setActiveRunId] = useState<string | null>(null);
 
     const [centerAlert, setCenterAlert] = useState<{ message: string; tone?: 'success' | 'error' } | null>(null);
     const [centerConfirm, setCenterConfirm] = useState<ConfirmRequest | null>(null);
     const confirmResolverRef = useRef<((value: boolean) => void) | null>(null);
+    const executeAbortRef = useRef<AbortController | null>(null);
     const showAlert = (message: string, tone: 'success' | 'error' = 'success') => {
         setCenterAlert({ message, tone });
         if (tone === 'success') {
@@ -62,6 +64,16 @@ export default function App() {
         if (resolver) resolver(result);
     };
     const formatLabel = (value: string) => value ? value[0].toUpperCase() + value.slice(1) : value;
+    const ensureActionIds = (task: Task) => {
+        if (!task.actions || !Array.isArray(task.actions)) return task;
+        let changed = false;
+        const nextActions = task.actions.map((action, index) => {
+            if (action.id) return action;
+            changed = true;
+            return { ...action, id: `act_${Date.now()}_${index}_${Math.floor(Math.random() * 1000)}` };
+        });
+        return changed ? { ...task, actions: nextActions } : task;
+    };
 
     const pinnedResultsKey = 'doppelganger.pinnedResults';
     const getTaskKey = (task?: Task | null) => task?.id ? String(task.id) : 'new';
@@ -303,7 +315,8 @@ export default function App() {
         }
         if (!migratedTask.extractionFormat) migratedTask.extractionFormat = 'json';
         if (migratedTask.includeShadowDom === undefined) migratedTask.includeShadowDom = true;
-        setCurrentTask(migratedTask);
+        const normalized = ensureActionIds(migratedTask);
+        setCurrentTask(normalized);
         setResults(null);
         navigate(`/tasks/${task.id}`);
         if (task.id) touchTask(task.id);
@@ -346,9 +359,38 @@ export default function App() {
         }
     };
 
+    const stopTask = async () => {
+        if (currentTask?.mode === 'headful') {
+            await stopHeadful();
+            return;
+        }
+        if (activeRunId) {
+            try {
+                await fetch('/api/executions/stop', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ runId: activeRunId })
+                });
+            } catch (e) {
+                console.error('Failed to request stop', e);
+            }
+        }
+        if (executeAbortRef.current) {
+            executeAbortRef.current.abort();
+        }
+        setIsExecuting(false);
+    };
+
     const runTaskWithSnapshot = async (taskOverride?: Task) => {
-        const taskToRun = taskOverride || currentTask;
-        if (!taskToRun || !taskToRun.url) return;
+        const taskToRunRaw = taskOverride || currentTask;
+        if (!taskToRunRaw || !taskToRunRaw.url) return;
+        const taskToRun = ensureActionIds(taskToRunRaw);
+        if (currentTask && taskToRun !== currentTask) {
+            setCurrentTask(taskToRun);
+        }
+
+        const runId = `run_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+        setActiveRunId(runId);
 
         if (isExecuting && taskToRun.mode === 'headful') {
             await stopHeadful();
@@ -406,14 +448,18 @@ export default function App() {
                 runSource: 'editor',
                 taskId: taskToRun.id,
                 taskName: taskToRun.name,
-                taskSnapshot: taskToRun
+                taskSnapshot: taskToRun,
+                runId
             };
 
             const executeTask = async (mode: 'scrape' | 'agent' | 'headful') => {
+                const controller = new AbortController();
+                executeAbortRef.current = controller;
                 const res = await fetch(`/${mode}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
+                    body: JSON.stringify(payload),
+                    signal: controller.signal
                 });
 
                 if (!res.ok) {
@@ -443,6 +489,11 @@ export default function App() {
                 timestamp: new Date().toLocaleTimeString(),
             });
         } catch (e: any) {
+            if (e?.name === 'AbortError') {
+                showAlert('Execution stopped.', 'success');
+                setIsExecuting(false);
+                return;
+            }
             if (
                 taskToRun?.mode === 'headful'
                 && payload
@@ -450,10 +501,13 @@ export default function App() {
             ) {
                 try {
                     const data = await (async () => {
+                        const controller = new AbortController();
+                        executeAbortRef.current = controller;
                         const res = await fetch(`/scrape`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(payload)
+                            body: JSON.stringify(payload),
+                            signal: controller.signal
                         });
                         if (!res.ok) {
                             const errorData = await res.json();
@@ -486,6 +540,7 @@ export default function App() {
                 setIsExecuting(false);
             }
         } finally {
+            executeAbortRef.current = null;
             if (taskToRun.mode !== 'headful') {
                 setIsExecuting(false);
             }
@@ -625,10 +680,12 @@ export default function App() {
                             onNotify={showAlert}
                             onPinResults={pinResults}
                             onUnpinResults={unpinResults}
+                            runId={activeRunId}
+                            onStop={stopTask}
                         />
                         ) : <LoadingScreen title="Initializing" subtitle="Preparing task workspace" />
                     } />
-                    <Route path="/tasks/:id" element={<EditorLoader tasks={tasks} loadTasks={loadTasks} touchTask={touchTask} currentTask={currentTask} setCurrentTask={setCurrentTask} editorView={editorView} setEditorView={setEditorView} isExecuting={isExecuting} onSave={saveTask} onRun={runTask} onRunSnapshot={runTaskWithSnapshot} results={results} pinnedResults={pinnedResults} saveMsg={saveMsg} onConfirm={requestConfirm} onNotify={showAlert} onPinResults={pinResults} onUnpinResults={unpinResults} />} />
+                    <Route path="/tasks/:id" element={<EditorLoader tasks={tasks} loadTasks={loadTasks} touchTask={touchTask} currentTask={currentTask} setCurrentTask={setCurrentTask} editorView={editorView} setEditorView={setEditorView} isExecuting={isExecuting} onSave={saveTask} onRun={runTask} onRunSnapshot={runTaskWithSnapshot} results={results} pinnedResults={pinnedResults} saveMsg={saveMsg} onConfirm={requestConfirm} onNotify={showAlert} onPinResults={pinResults} onUnpinResults={unpinResults} runId={activeRunId} onStop={stopTask} />} />
                     <Route path="/settings" element={
                         <SettingsScreen
                             onClearStorage={clearStorage}

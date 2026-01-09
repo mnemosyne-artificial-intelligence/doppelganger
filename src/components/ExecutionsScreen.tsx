@@ -63,7 +63,7 @@ const ExecutionsScreen: React.FC<ExecutionsScreenProps> = ({ onConfirm, onNotify
 
     return (
         <main className="flex-1 p-12 overflow-y-auto custom-scrollbar animate-in fade-in duration-500">
-            <div className="w-full space-y-8">
+            <div className="max-w-6xl mx-auto space-y-8">
                 <div className="flex items-end justify-between">
                     <div className="space-y-2">
                         <p className="text-[10px] font-bold text-blue-400 uppercase tracking-[0.4em]">Executions</p>
@@ -107,10 +107,18 @@ const ExecutionsScreen: React.FC<ExecutionsScreenProps> = ({ onConfirm, onNotify
 
                 <div className="space-y-3">
                     {filtered.map((exec) => (
-                        <button
+                        <div
                             key={exec.id}
                             onClick={() => navigate(`/executions/${exec.id}`)}
-                            className="glass-card w-full rounded-2xl p-5 flex items-center gap-4 text-left hover:bg-white/[0.06] transition-all"
+                            onKeyDown={(event) => {
+                                if (event.key === 'Enter' || event.key === ' ') {
+                                    event.preventDefault();
+                                    navigate(`/executions/${exec.id}`);
+                                }
+                            }}
+                            role="button"
+                            tabIndex={0}
+                            className="glass-card w-full rounded-2xl p-5 flex items-center gap-4 text-left hover:bg-white/[0.06] transition-all cursor-pointer"
                         >
                             <div className="w-10 h-10 rounded-2xl bg-white/5 flex items-center justify-center text-gray-400">
                                 {exec.source === 'api' ? <Cloud className="w-5 h-5" /> : <Monitor className="w-5 h-5" />}
@@ -137,7 +145,7 @@ const ExecutionsScreen: React.FC<ExecutionsScreenProps> = ({ onConfirm, onNotify
                             >
                                 Delete
                             </button>
-                        </button>
+                        </div>
                     ))}
                 </div>
             </div>

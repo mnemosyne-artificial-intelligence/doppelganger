@@ -22,7 +22,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ status, onSubmit, error }) => {
                 style={{ backgroundImage: 'radial-gradient(#fff 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
             <div className="w-[400px] glass-card p-10 rounded-[48px] space-y-8 relative">
                 <div className="text-center space-y-2">
-                    <h1 className="text-2xl font-bold tracking-tighter text-white uppercase italic">Doppelgänger</h1>
+                    <h1 className="text-2xl font-bold tracking-tighter text-white uppercase">Doppelganger</h1>
                     <p className="text-[10px] font-bold text-gray-500 uppercase tracking-[0.3em]">
                         {status === 'setup' ? 'Initializing System' : 'Access Restricted'}
                     </p>

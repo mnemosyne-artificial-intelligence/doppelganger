@@ -48,6 +48,8 @@ interface EditorScreenProps {
     onPinResults?: (results: Results) => void;
     onUnpinResults?: () => void;
     onRunSnapshot?: (task: Task) => void;
+    runId?: string | null;
+    onStop?: () => void;
 }
 
 const VariableRow: React.FC<{
@@ -122,7 +124,9 @@ const EditorScreen: React.FC<EditorScreenProps> = ({
     onNotify,
     onPinResults,
     onUnpinResults,
-    onRunSnapshot
+    onRunSnapshot,
+    runId,
+    onStop
 }) => {
     const [copied, setCopied] = useState<string | null>(null);
     const [contextMenu, setContextMenu] = useState<{ id: string; x: number; y: number } | null>(null);
@@ -146,6 +150,7 @@ const EditorScreen: React.FC<EditorScreenProps> = ({
     const [actionPaletteTargetId, setActionPaletteTargetId] = useState<string | null>(null);
     const [versionPreview, setVersionPreview] = useState<{ id: string; timestamp: number; snapshot: Task } | null>(null);
     const [versionPreviewLoading, setVersionPreviewLoading] = useState(false);
+    const [actionStatusById, setActionStatusById] = useState<Record<string, 'running' | 'success' | 'error' | 'skipped'>>({});
     const getStoredSplitPercent = () => {
         try {
             const stored = localStorage.getItem('doppelganger.layout.leftWidthPct');
@@ -420,6 +425,36 @@ const EditorScreen: React.FC<EditorScreenProps> = ({
     }, [contextMenu]);
 
     useEffect(() => {
+        if (!runId || currentTask.mode !== 'agent') return;
+        setActionStatusById({});
+        const source = new EventSource(`/api/executions/stream?runId=${encodeURIComponent(runId)}`, { withCredentials: true });
+        source.onmessage = (event) => {
+            if (!event.data) return;
+            try {
+                const payload = JSON.parse(event.data);
+                if (payload && payload.actionId && payload.status) {
+                    setActionStatusById((prev) => ({ ...prev, [payload.actionId]: payload.status }));
+                }
+            } catch {
+                // ignore
+            }
+        };
+        source.addEventListener('ready', () => {
+            // stream is alive
+        });
+        source.onopen = () => {
+            // connected
+        };
+        source.onerror = () => {
+            // avoid keeping a dead connection open
+            source.close();
+        };
+        return () => {
+            source.close();
+        };
+    }, [runId, currentTask.mode]);
+
+    useEffect(() => {
         if (typeof window === 'undefined') return;
         const pct = getStoredSplitPercent();
         setEditorWidth(clampEditorWidth(Math.round(window.innerWidth * pct)));
@@ -626,6 +661,16 @@ const EditorScreen: React.FC<EditorScreenProps> = ({
                                                         (dragState.index > dragOverIndex && idx < dragState.index && idx >= dragOverIndex));
                                                 const translateY = isBetween ? (dragState?.height || 0) * (dragState.index < (dragOverIndex ?? 0) ? -1 : 1) : 0;
                                                 const depth = blockDepths[idx] || 0;
+                                                const status = action.disabled ? 'skipped' : actionStatusById[action.id];
+                                                const statusClass = status === 'running'
+                                                    ? 'border-yellow-400/60'
+                                                    : status === 'success'
+                                                        ? 'border-green-400/60'
+                                                        : status === 'error'
+                                                            ? 'border-red-400/70'
+                                                            : status === 'skipped'
+                                                                ? 'border-gray-500/40'
+                                                                : '';
                                                     const renderBlockMarker = (type: Action['type']) => {
                                                         const iconClass = "w-3 h-3";
                                                         if (type === 'if' || type === 'else') return <Split className={`${iconClass} text-blue-400`} />;
@@ -676,7 +721,7 @@ const EditorScreen: React.FC<EditorScreenProps> = ({
                                                         finalizeDrag();
                                                     }}
                                                     onContextMenu={(e) => openContextMenu(e, action.id)}
-                                                    className={`glass-card p-5 rounded-2xl space-y-4 group/item relative transition-[transform,box-shadow,opacity,filter,background-color,border-color] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform select-none touch-none ${isDragging ? 'ring-2 ring-white/40 scale-[1.02] -translate-y-0.5 shadow-[0_30px_80px_rgba(0,0,0,0.45)] opacity-85 z-20' : ''} ${dragOverIndex === idx && !isDragging ? 'ring-2 ring-blue-400/60 bg-blue-500/5' : ''} ${action.disabled ? 'opacity-40 grayscale' : ''}`}
+                                                    className={`glass-card p-5 rounded-2xl space-y-4 group/item relative transition-[transform,box-shadow,opacity,filter,background-color,border-color] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform select-none touch-none ${statusClass} ${isDragging ? 'ring-2 ring-white/40 scale-[1.02] -translate-y-0.5 shadow-[0_30px_80px_rgba(0,0,0,0.45)] opacity-85 z-20' : ''} ${dragOverIndex === idx && !isDragging ? 'ring-2 ring-blue-400/60 bg-blue-500/5' : ''} ${action.disabled ? 'opacity-40 grayscale' : ''}`}
                                                     style={{
                                                         transform: isDragging
                                                             ? `translateY(${(dragState?.currentY || 0) - (dragState?.pointerOffset || 0) - (dragState?.originTop || 0)}px)`
@@ -1367,18 +1412,29 @@ return JSON.stringify(links, null, 2);`}
                 />
 
                 <div className="p-8 border-t border-white/10 backdrop-blur-xl shrink-0">
-                    <button
-                        onClick={onRun}
-                        disabled={isExecuting && currentTask.mode !== 'headful'}
-                        className="shine-effect w-full bg-white text-black py-4 rounded-2xl font-bold text-[10px] tracking-[0.3em] uppercase transition-all shadow-xl shadow-white/5 flex items-center justify-center gap-3 disabled:opacity-50"
-                    >
-                        {isExecuting && currentTask.mode !== 'headful' ? (
-                            <div className="w-3 h-3 border-2 border-black/20 border-t-black rounded-full animate-spin" />
-                        ) : <Play className="w-3 h-3 fill-black" />}
-                        <span>
-                            {isExecuting && currentTask.mode === 'headful' ? 'Stop Headful' : isExecuting ? 'Running...' : 'Run Task'}
-                        </span>
-                    </button>
+                    <div className="flex items-center gap-3">
+                        <button
+                            onClick={onRun}
+                            disabled={isExecuting && currentTask.mode !== 'headful'}
+                            className="shine-effect flex-1 bg-white text-black py-4 rounded-2xl font-bold text-[10px] tracking-[0.3em] uppercase transition-all shadow-xl shadow-white/5 flex items-center justify-center gap-3 disabled:opacity-50"
+                        >
+                            {isExecuting && currentTask.mode !== 'headful' ? (
+                                <div className="w-3 h-3 border-2 border-black/20 border-t-black rounded-full animate-spin" />
+                            ) : <Play className="w-3 h-3 fill-black" />}
+                            <span>
+                                {isExecuting && currentTask.mode === 'headful' ? 'Stop Headful' : isExecuting ? 'Running...' : 'Run Task'}
+                            </span>
+                        </button>
+                        {isExecuting && (
+                            <button
+                                onClick={() => onStop?.()}
+                                className="w-12 h-12 rounded-2xl border border-white/10 text-white/80 hover:text-white hover:bg-white/10 transition-all flex items-center justify-center"
+                                title="Stop task"
+                            >
+                                <Square className="w-4 h-4" />
+                            </button>
+                        )}
+                    </div>
                 </div>
             </aside >
             <div
@@ -1404,6 +1460,7 @@ return JSON.stringify(links, null, 2);`}
                     onNotify={onNotify}
                     onPin={onPinResults}
                     onUnpin={onUnpinResults}
+                    fullWidth={currentTask.mode === 'headful'}
                 />
                 {versionPreview && (
                     <div className="fixed inset-0 z-[210] flex items-center justify-center bg-black/70 backdrop-blur-sm px-6">

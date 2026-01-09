@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Execution, Results, ConfirmRequest } from '../types';
-import CodeEditor from './CodeEditor';
 import ResultsPane from './editor/ResultsPane';
 
 interface ExecutionDetailScreenProps {
@@ -92,23 +91,7 @@ const ExecutionDetailScreen: React.FC<ExecutionDetailScreenProps> = ({ onConfirm
                     </button>
                 </div>
 
-                <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
-                    <div className="glass-card rounded-[32px] p-8 flex flex-col min-h-[420px]">
-                        <div className="flex items-center justify-between border-b border-white/5 pb-4 mb-6">
-                            <span className="text-[8px] font-bold text-gray-500 uppercase tracking-widest">Task Snapshot</span>
-                        </div>
-                        {execution.taskSnapshot ? (
-                            <CodeEditor
-                                readOnly
-                                value={JSON.stringify(execution.taskSnapshot, null, 2)}
-                                language="json"
-                                className="flex-1 min-h-0"
-                            />
-                        ) : (
-                            <div className="text-[9px] text-gray-500 uppercase tracking-widest">No snapshot captured.</div>
-                        )}
-                    </div>
-                    <div className="glass-card rounded-[32px] p-8 flex flex-col min-h-[420px]">
+                <div className="glass-card rounded-[32px] p-8 flex flex-col min-h-[420px]">
                         <div className="flex items-center justify-between border-b border-white/5 pb-4 mb-6">
                             <span className="text-[8px] font-bold text-gray-500 uppercase tracking-widest">Output</span>
                         </div>
@@ -118,11 +101,11 @@ const ExecutionDetailScreen: React.FC<ExecutionDetailScreenProps> = ({ onConfirm
                                 isExecuting={false}
                                 onConfirm={onConfirm}
                                 onNotify={onNotify}
+                                fullWidth
                             />
                         ) : (
                             <div className="text-[9px] text-gray-500 uppercase tracking-widest">No output captured.</div>
                         )}
-                    </div>
                 </div>
             </div>
         </main>

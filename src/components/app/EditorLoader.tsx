@@ -24,6 +24,8 @@ interface EditorLoaderProps {
     saveMsg: string;
     onConfirm: any;
     onNotify: any;
+    runId?: string | null;
+    onStop?: () => void;
 }
 
 const EditorLoader: React.FC<EditorLoaderProps> = ({ tasks, loadTasks, touchTask, currentTask, setCurrentTask, ...props }) => {
@@ -49,6 +51,12 @@ const EditorLoader: React.FC<EditorLoaderProps> = ({ tasks, loadTasks, touchTask
                 if (!migrated.variables || Array.isArray(migrated.variables)) migrated.variables = {};
                 if (!migrated.stealth) {
                     migrated.stealth = { allowTypos: false, idleMovements: false, overscroll: false, deadClicks: false, fatigue: false, naturalTyping: false };
+                }
+                if (Array.isArray(migrated.actions)) {
+                    migrated.actions = migrated.actions.map((action, index) => {
+                        if (action && action.id) return action;
+                        return { ...action, id: `act_${Date.now()}_${index}_${Math.floor(Math.random() * 1000)}` };
+                    });
                 }
                 if (migrated.includeShadowDom === undefined) migrated.includeShadowDom = true;
                 setCurrentTask(migrated);

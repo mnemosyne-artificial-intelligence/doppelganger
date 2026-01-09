@@ -82,16 +82,12 @@ async function handleHeadful(req, res) {
 
         const context = await browser.newContext(contextOptions);
         await context.addInitScript(() => {
-            window.open = (url) => {
-                if (url) window.location.href = url;
-                return window;
-            };
+            window.open = () => null;
             document.addEventListener('click', (event) => {
                 const target = event.target;
                 const anchor = target && target.closest ? target.closest('a[target="_blank"]') : null;
-                if (anchor && anchor.href) {
+                if (anchor) {
                     event.preventDefault();
-                    window.location.href = anchor.href;
                 }
             }, true);
         });

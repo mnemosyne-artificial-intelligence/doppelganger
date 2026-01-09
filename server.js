@@ -5,24 +5,24 @@ const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const net = require('net');
 const app = express();
-const port = process.env.PORT || 11345;
+const DEFAULT_PORT = 11345;
+const port = Number(process.env.PORT) || DEFAULT_PORT;
 const DIST_DIR = path.join(__dirname, 'dist');
 const SESSION_SECRET_FILE = path.join(__dirname, 'data', 'session_secret.txt');
 let SESSION_SECRET = process.env.SESSION_SECRET;
 
 if (!SESSION_SECRET) {
-    if (process.env.NODE_ENV !== 'production') {
-        try {
-            if (fs.existsSync(SESSION_SECRET_FILE)) {
-                SESSION_SECRET = fs.readFileSync(SESSION_SECRET_FILE, 'utf8').trim();
-            } else {
-                SESSION_SECRET = crypto.randomBytes(48).toString('hex');
-                fs.writeFileSync(SESSION_SECRET_FILE, SESSION_SECRET);
-            }
-        } catch (e) {
-            console.warn('Failed to load session secret from disk, falling back to process env only.');
+    try {
+        if (fs.existsSync(SESSION_SECRET_FILE)) {
+            SESSION_SECRET = fs.readFileSync(SESSION_SECRET_FILE, 'utf8').trim();
+        } else {
+            SESSION_SECRET = crypto.randomBytes(48).toString('hex');
+            fs.writeFileSync(SESSION_SECRET_FILE, SESSION_SECRET);
         }
+    } catch (e) {
+        console.warn('Failed to load session secret from disk, falling back to process env only.');
     }
 }
 
@@ -75,6 +75,22 @@ const STORAGE_STATE_FILE = (() => {
 const MAX_TASK_VERSIONS = 30;
 const EXECUTIONS_FILE = path.join(__dirname, 'data', 'executions.json');
 const MAX_EXECUTIONS = 500;
+const executionStreams = new Map();
+const stopRequests = new Set();
+
+const sendExecutionUpdate = (runId, payload) => {
+    if (!runId) return;
+    const clients = executionStreams.get(runId);
+    if (!clients || clients.size === 0) return;
+    const data = `data: ${JSON.stringify(payload)}\n\n`;
+    clients.forEach((res) => {
+        try {
+            res.write(data);
+        } catch {
+            // ignore
+        }
+    });
+};
 
 // Helper to load tasks
 function loadTasks() {
@@ -212,14 +228,26 @@ function generateApiKey() {
 }
 
 const { handleScrape } = require('./scrape');
-const { handleAgent } = require('./agent');
+const { handleAgent, setProgressReporter, setStopChecker } = require('./agent');
 const { handleHeadful, stopHeadful } = require('./headful');
 
+setProgressReporter(sendExecutionUpdate);
+setStopChecker((runId) => {
+    if (!runId) return false;
+    if (stopRequests.has(runId)) {
+        stopRequests.delete(runId);
+        return true;
+    }
+    return false;
+});
+
 app.use(express.json());
+const SESSION_TTL_SECONDS = 10 * 365 * 24 * 60 * 60; // 10 years
+
 app.use(session({
     store: new FileStore({
         path: SESSIONS_DIR,
-        ttl: 7 * 24 * 60 * 60, // 7 days in seconds
+        ttl: SESSION_TTL_SECONDS,
         retries: 0
     }),
     secret: SESSION_SECRET,
@@ -227,7 +255,7 @@ app.use(session({
     saveUninitialized: false,
     cookie: {
         secure: false,
-        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+        maxAge: SESSION_TTL_SECONDS * 1000
     }
 }));
 
@@ -412,6 +440,36 @@ app.get('/api/executions', requireAuth, (req, res) => {
     const executions = loadExecutions();
     res.json({ executions });
 });
+app.get('/api/executions/stream', requireAuth, (req, res) => {
+    const runId = String(req.query.runId || '').trim();
+    if (!runId) return res.status(400).json({ error: 'MISSING_RUN_ID' });
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    if (typeof res.flushHeaders === 'function') res.flushHeaders();
+    res.write('event: ready\ndata: {}\n\n');
+
+    let clients = executionStreams.get(runId);
+    if (!clients) {
+        clients = new Set();
+        executionStreams.set(runId, clients);
+    }
+    clients.add(res);
+
+    const keepAlive = setInterval(() => {
+        try {
+            res.write(':keep-alive\n\n');
+        } catch {
+            // ignore
+        }
+    }, 20000);
+
+    req.on('close', () => {
+        clearInterval(keepAlive);
+        clients.delete(res);
+        if (clients.size === 0) executionStreams.delete(runId);
+    });
+});
 app.get('/api/executions/:id', requireAuth, (req, res) => {
     const executions = loadExecutions();
     const exec = executions.find(e => e.id === req.params.id);
@@ -422,6 +480,18 @@ app.get('/api/executions/:id', requireAuth, (req, res) => {
 app.post('/api/executions/clear', requireAuth, (req, res) => {
     saveExecutions([]);
     res.json({ success: true });
+    try {
+        if (runId) sendExecutionUpdate(runId, { status: 'stop_requested' });
+    } catch {
+        // ignore
+    }
+});
+
+app.post('/api/executions/stop', requireAuth, (req, res) => {
+    const runId = String(req.body?.runId || '').trim();
+    if (!runId) return res.status(400).json({ error: 'MISSING_RUN_ID' });
+    stopRequests.add(runId);
+    res.json({ success: true });
 });
 
 app.delete('/api/executions/:id', requireAuth, (req, res) => {
@@ -430,6 +500,7 @@ app.delete('/api/executions/:id', requireAuth, (req, res) => {
     saveExecutions(executions);
     res.json({ success: true });
 });
+
 
 app.get('/api/tasks/:id/versions', requireAuth, (req, res) => {
     const tasks = loadTasks();
@@ -682,6 +753,14 @@ app.all('/scraper', requireAuth, (req, res) => {
 });
 app.all('/agent', requireAuth, (req, res) => {
     registerExecution(req, res, { mode: 'agent' });
+    try {
+        const runId = String((req.body && req.body.runId) || req.query.runId || '').trim();
+        if (runId) {
+            sendExecutionUpdate(runId, { status: 'started' });
+        }
+    } catch {
+        // ignore
+    }
     return handleAgent(req, res);
 });
 app.post('/headful', requireAuth, (req, res) => {
@@ -715,6 +794,7 @@ const novncDir = novncDirCandidates.find((candidate) => {
         return false;
     }
 });
+const novncEnabled = !!novncDir;
 if (novncDir) {
     app.use('/novnc', express.static(novncDir));
 }
@@ -722,8 +802,74 @@ if (novncDir) {
 app.use('/screenshots', express.static(screenshotsDir));
 app.use(express.static(DIST_DIR));
 
-const server = app.listen(port, '0.0.0.0', () => {
-    const address = server.address();
-    const displayPort = typeof address === 'object' && address ? address.port : port;
-    console.log(`Server running at http://localhost:${displayPort}`);
+app.get('/api/headful/status', (req, res) => {
+    const useNovnc = !!process.env.DISPLAY && novncEnabled;
+    res.json({ useNovnc });
 });
+
+const tryBind = (host, port) => new Promise((resolve, reject) => {
+    const tester = net.createServer();
+    tester.unref();
+    tester.once('error', (err) => {
+        tester.close(() => reject(err));
+    });
+    tester.once('listening', () => {
+        tester.close(() => resolve(true));
+    });
+    tester.listen({ port, host });
+});
+
+const isPortAvailable = async (port) => {
+    try {
+        await tryBind('127.0.0.1', port);
+    } catch (err) {
+        if (err && err.code === 'EADDRINUSE') return false;
+        throw err;
+    }
+    try {
+        await tryBind('::1', port);
+    } catch (err) {
+        if (err && err.code === 'EADDRINUSE') return false;
+        if (err && (err.code === 'EADDRNOTAVAIL' || err.code === 'EAFNOSUPPORT')) return true;
+        throw err;
+    }
+    return true;
+};
+
+const findAvailablePort = (startPort, maxAttempts = 20) => new Promise((resolve, reject) => {
+    let currentPort = startPort;
+    const tryPort = async () => {
+        try {
+            const available = await isPortAvailable(currentPort);
+            if (available) return resolve(currentPort);
+        } catch (err) {
+            return reject(err);
+        }
+        if (currentPort < startPort + maxAttempts) {
+            currentPort += 1;
+            return tryPort();
+        }
+        return reject(new Error('No available port found'));
+    };
+    tryPort();
+});
+
+findAvailablePort(port, 20)
+    .then((availablePort) => {
+        if (availablePort !== port) {
+            console.log(`Port ${port} in use, switched to ${availablePort}.`);
+        }
+        const server = app.listen(availablePort, '0.0.0.0', () => {
+            const address = server.address();
+            const displayPort = typeof address === 'object' && address ? address.port : availablePort;
+            console.log(`Server running at http://localhost:${displayPort}`);
+        });
+        server.on('error', (err) => {
+            console.error('Server failed to start:', err.message || err);
+            process.exit(1);
+        });
+    })
+    .catch((err) => {
+        console.error('Server failed to start:', err.message || err);
+        process.exit(1);
+    });

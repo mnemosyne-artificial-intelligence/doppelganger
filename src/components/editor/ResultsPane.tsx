@@ -13,6 +13,7 @@ interface ResultsPaneProps {
     onNotify: (message: string, tone?: 'success' | 'error') => void;
     onPin?: (results: Results) => void;
     onUnpin?: () => void;
+    fullWidth?: boolean;
 }
 
 const MAX_PREVIEW_CHARS = 60000;
@@ -250,10 +251,11 @@ const downloadText = (filename: string, content: string, mime: string) => {
     URL.revokeObjectURL(url);
 };
 
-const ResultsPane: React.FC<ResultsPaneProps> = ({ results, pinnedResults, isExecuting, isHeadful, onConfirm, onNotify, onPin, onUnpin }) => {
+const ResultsPane: React.FC<ResultsPaneProps> = ({ results, pinnedResults, isExecuting, isHeadful, onConfirm, onNotify, onPin, onUnpin, fullWidth }) => {
     const [copied, setCopied] = useState<string | null>(null);
     const [dataView, setDataView] = useState<'raw' | 'table'>('raw');
     const [resultView, setResultView] = useState<'latest' | 'pinned'>(() => (pinnedResults && !results ? 'pinned' : 'latest'));
+    const [headfulViewer, setHeadfulViewer] = useState<'checking' | 'native' | 'novnc'>('checking');
     const activeResults = resultView === 'pinned' && pinnedResults ? pinnedResults : results;
     const tableData = getTableData(activeResults?.data);
     const preview = activeResults && activeResults.data !== undefined && activeResults.data !== null && activeResults.data !== ''
@@ -292,6 +294,34 @@ const ResultsPane: React.FC<ResultsPaneProps> = ({ results, pinnedResults, isExe
             setResultView('latest');
         }
     }, [pinnedResults, resultView]);
+
+    useEffect(() => {
+        if (!isHeadful || resultView !== 'latest') return;
+        let cancelled = false;
+        const checkHeadful = async () => {
+            try {
+                const res = await fetch('/api/headful/status', { cache: 'no-store' });
+                const data = res.ok ? await res.json() : { useNovnc: false };
+                if (cancelled) return;
+                if (data && data.useNovnc) {
+                    try {
+                        const test = await fetch('/novnc/core/rfb.js', { method: 'HEAD', cache: 'no-store' });
+                        if (!cancelled) setHeadfulViewer(test.ok ? 'novnc' : 'native');
+                    } catch {
+                        if (!cancelled) setHeadfulViewer('native');
+                    }
+                } else {
+                    if (!cancelled) setHeadfulViewer('native');
+                }
+            } catch {
+                if (!cancelled) setHeadfulViewer('native');
+            }
+        };
+        checkHeadful();
+        return () => {
+            cancelled = true;
+        };
+    }, [isHeadful, resultView]);
 
     const handleCopy = async (text: string, id: string, options?: { skipSizeConfirm?: boolean; truncatedNotice?: boolean }) => {
         if (!text) {
@@ -341,8 +371,26 @@ const ResultsPane: React.FC<ResultsPaneProps> = ({ results, pinnedResults, isExe
     if (isHeadful && resultView === 'latest') {
         const { origin, hostname } = window.location;
         const headfulUrl = `${origin}/novnc.html?host=${hostname}&port=54311&path=websockify`;
+        if (headfulViewer === 'native') {
+            return (
+                <div className="glass-card rounded-[32px] overflow-hidden h-[80vh] w-full relative flex items-center justify-center">
+                    <div className="text-[10px] font-bold uppercase tracking-widest text-gray-500">
+                        Headful session running in a native browser window.
+                    </div>
+                </div>
+            );
+        }
+        if (headfulViewer === 'checking') {
+            return (
+                <div className="glass-card rounded-[32px] overflow-hidden h-[80vh] w-full relative flex items-center justify-center">
+                    <div className="text-[10px] font-bold uppercase tracking-widest text-gray-500">
+                        Checking headful viewer...
+                    </div>
+                </div>
+            );
+        }
         return (
-            <div className="glass-card rounded-[32px] overflow-hidden h-[75vh] relative">
+            <div className="glass-card rounded-[32px] overflow-hidden h-[80vh] w-full relative">
                 <iframe
                     src={headfulUrl}
                     className="absolute inset-0 w-full h-full"
@@ -363,8 +411,10 @@ const ResultsPane: React.FC<ResultsPaneProps> = ({ results, pinnedResults, isExe
         );
     }
 
+    const containerClassName = fullWidth ? 'space-y-12 relative z-10 w-full' : 'space-y-12 relative z-10 max-w-5xl mx-auto';
+
     return (
-        <div className="space-y-12 relative z-10 max-w-5xl mx-auto">
+        <div className={containerClassName}>
             <div className="flex items-end justify-between border-b border-white/5 pb-10">
                 <div className="space-y-4">
                     <p className="text-[9px] font-bold text-gray-500 uppercase tracking-[0.3em]">Preview</p>

@@ -34,6 +34,35 @@ const loadApiKey = () => {
     }
 };
 
+let progressReporter = null;
+let stopChecker = null;
+
+const setProgressReporter = (reporter) => {
+    progressReporter = reporter;
+};
+
+const reportProgress = (runId, payload) => {
+    if (!runId || typeof progressReporter !== 'function') return;
+    try {
+        progressReporter(runId, payload);
+    } catch {
+        // ignore
+    }
+};
+
+const setStopChecker = (checker) => {
+    stopChecker = checker;
+};
+
+const isStopRequested = (runId) => {
+    if (!runId || typeof stopChecker !== 'function') return false;
+    try {
+        return !!stopChecker(runId);
+    } catch {
+        return false;
+    }
+};
+
 async function moveMouseHumanlike(page, targetX, targetY) {
     const steps = 8 + Math.floor(Math.random() * 6);
     const startX = targetX + (Math.random() - 0.5) * 120;
@@ -96,6 +125,14 @@ async function humanType(page, selector, text, options = {}) {
     let burstCounter = 0;
     const burstLimit = naturalTyping ? Math.floor(randomBetween(4, 12)) : 999;
     const baseDelay = naturalTyping ? randomBetween(30, 140) : randomBetween(25, 80);
+    const typeChar = async (char, delay) => {
+        try {
+            await page.keyboard.press(char, { delay });
+        } catch (err) {
+            await page.keyboard.insertText(char);
+            if (delay) await page.waitForTimeout(delay);
+        }
+    };
 
     for (const char of chars) {
         if (naturalTyping && burstCounter >= burstLimit) {
@@ -119,7 +156,7 @@ async function humanType(page, selector, text, options = {}) {
 
         const extra = punctuationPause.test(char) ? randomBetween(140, 320) : randomBetween(0, 90);
         const fatiguePause = fatigue && Math.random() < 0.06 ? randomBetween(180, 420) : 0;
-        await page.keyboard.press(char, { delay: baseDelay + extra + fatiguePause });
+        await typeChar(char, baseDelay + extra + fatiguePause);
         burstCounter += 1;
 
         if (naturalTyping && char === ' ') {
@@ -131,6 +168,7 @@ async function humanType(page, selector, text, options = {}) {
 async function handleAgent(req, res) {
     const data = (req.method === 'POST') ? req.body : req.query;
     let { url, actions, wait: globalWait, rotateUserAgents, humanTyping, stealth = {} } = data;
+    const runId = data.runId ? String(data.runId) : null;
     const includeShadowDomRaw = data.includeShadowDom ?? req.query.includeShadowDom;
     const includeShadowDom = includeShadowDomRaw === undefined
         ? true
@@ -814,6 +852,10 @@ async function handleAgent(req, res) {
         let steps = 0;
 
         while (index < actions.length) {
+            if (isStopRequested(runId)) {
+                logs.push('Execution stopped by user.');
+                break;
+            }
             if (steps++ > maxSteps) {
                 logs.push('Execution aborted: possible infinite loop.');
                 break;
@@ -824,6 +866,7 @@ async function handleAgent(req, res) {
 
             if (act.disabled) {
                 logs.push(`SKIPPED disabled action: ${act.type}`);
+                reportProgress(runId, { actionId: act.id, status: 'skipped' });
                 index += 1;
                 continue;
             }
@@ -831,8 +874,10 @@ async function handleAgent(req, res) {
             if (act.type === 'on_error') {
                 const endIndex = startToEnd[index];
                 if (endIndex !== undefined) {
+                    reportProgress(runId, { actionId: act.id, status: 'running' });
                     errorHandler = { start: index + 1, end: endIndex };
                     logs.push('On-error handler registered.');
+                    reportProgress(runId, { actionId: act.id, status: 'success' });
                     index = endIndex + 1;
                     continue;
                 }
@@ -840,10 +885,12 @@ async function handleAgent(req, res) {
 
             if (act.type === 'if') {
                 try {
+                    reportProgress(runId, { actionId: act.id, status: 'running' });
                     const hasStructured = act.conditionVarType || act.conditionOp || act.conditionVar || act.conditionValue;
                     const condition = hasStructured ? evalStructuredCondition(act) : await evalCondition(act.value);
                     setBlockOutput(condition);
                     logs.push(`If condition: ${condition ? 'true' : 'false'}`);
+                    reportProgress(runId, { actionId: act.id, status: 'success' });
                     if (!condition) {
                         const elseIndex = startToElse[index];
                         if (elseIndex !== undefined) {
@@ -855,6 +902,7 @@ async function handleAgent(req, res) {
                     }
                 } catch (err) {
                     logs.push(`FAILED condition: ${err.message}`);
+                    reportProgress(runId, { actionId: act.id, status: 'error' });
                     if (errorHandler && !inErrorHandler) {
                         inErrorHandler = true;
                         index = errorHandler.start;
@@ -866,21 +914,25 @@ async function handleAgent(req, res) {
             }
 
             if (act.type === 'else') {
+                reportProgress(runId, { actionId: act.id, status: 'success' });
                 index = (elseToEnd[index] ?? index) + 1;
                 continue;
             }
 
             if (act.type === 'while') {
                 try {
+                    reportProgress(runId, { actionId: act.id, status: 'running' });
                     const condition = await evalCondition(act.value);
                     setBlockOutput(condition);
                     logs.push(`While condition: ${condition ? 'true' : 'false'}`);
+                    reportProgress(runId, { actionId: act.id, status: 'success' });
                     if (!condition) {
                         index = (startToEnd[index] ?? index) + 1;
                         continue;
                     }
                 } catch (err) {
                     logs.push(`FAILED condition: ${err.message}`);
+                    reportProgress(runId, { actionId: act.id, status: 'error' });
                     if (errorHandler && !inErrorHandler) {
                         inErrorHandler = true;
                         index = errorHandler.start;
@@ -892,23 +944,27 @@ async function handleAgent(req, res) {
             }
 
             if (act.type === 'repeat') {
+                reportProgress(runId, { actionId: act.id, status: 'running' });
                 const rawCount = parseInt(resolveMaybe(act.value) || '0', 10);
                 const count = Number.isFinite(rawCount) ? rawCount : 0;
                 const state = repeatState.get(index) || { remaining: count };
                 repeatState.set(index, state);
                 if (state.remaining <= 0) {
                     repeatState.delete(index);
+                    reportProgress(runId, { actionId: act.id, status: 'success' });
                     index = (startToEnd[index] ?? index) + 1;
                     continue;
                 }
                 state.remaining -= 1;
                 logs.push(`Repeat block: ${state.remaining + 1} remaining`);
                 setBlockOutput(state.remaining + 1);
+                reportProgress(runId, { actionId: act.id, status: 'success' });
                 index += 1;
                 continue;
             }
 
             if (act.type === 'foreach') {
+                reportProgress(runId, { actionId: act.id, status: 'running' });
                 let state = foreachState.get(index);
                 if (!state) {
                     const items = await getForeachItems(act);
@@ -917,6 +973,7 @@ async function handleAgent(req, res) {
                 }
                 if (!state.items || state.items.length === 0) {
                     foreachState.delete(index);
+                    reportProgress(runId, { actionId: act.id, status: 'success' });
                     index = (startToEnd[index] ?? index) + 1;
                     continue;
                 }
@@ -924,11 +981,13 @@ async function handleAgent(req, res) {
                 setLoopVars(item, state.index, state.items.length);
                 setBlockOutput(item);
                 logs.push(`For-each item ${state.index + 1}/${state.items.length}`);
+                reportProgress(runId, { actionId: act.id, status: 'success' });
                 index += 1;
                 continue;
             }
 
             if (act.type === 'end') {
+                reportProgress(runId, { actionId: act.id, status: 'success' });
                 const startIndex = endToStart[index];
                 if (startIndex !== undefined) {
                     const startAction = actions[startIndex];
@@ -969,14 +1028,18 @@ async function handleAgent(req, res) {
             if (stopRequested) break;
 
             try {
+                reportProgress(runId, { actionId: act.id, status: 'running' });
                 const result = await executeAction(act);
                 if (act.type === 'stop') {
                     setBlockOutput(result);
+                    reportProgress(runId, { actionId: act.id, status: stopOutcome === 'error' ? 'error' : 'success' });
                     break;
                 }
                 if (result !== undefined) setBlockOutput(result);
+                reportProgress(runId, { actionId: act.id, status: 'success' });
             } catch (err) {
                 logs.push(`FAILED action ${act.type}: ${err.message}`);
+                reportProgress(runId, { actionId: act.id, status: 'error' });
                 if (errorHandler && !inErrorHandler) {
                     inErrorHandler = true;
                     index = errorHandler.start;
@@ -1106,7 +1169,10 @@ async function handleAgent(req, res) {
             }
         };
 
-        const extractionScript = typeof data.extractionScript === 'string' ? data.extractionScript : undefined;
+        const extractionScriptRaw = typeof data.extractionScript === 'string'
+            ? data.extractionScript
+            : (data.taskSnapshot && typeof data.taskSnapshot.extractionScript === 'string' ? data.taskSnapshot.extractionScript : undefined);
+        const extractionScript = extractionScriptRaw ? resolveTemplate(extractionScriptRaw) : undefined;
         const extraction = await runExtractionScript(extractionScript, cleanedHtml, page.url());
 
         // Simple HTML Formatter (fallback to raw if formatting collapses content)
@@ -1146,7 +1212,9 @@ async function handleAgent(req, res) {
             console.error('Agent Screenshot failed:', e.message);
         }
 
-        const extractionFormat = data.extractionFormat === 'csv' ? 'csv' : 'json';
+        const extractionFormat = String(data.extractionFormat || (data.taskSnapshot && data.taskSnapshot.extractionFormat) || '').toLowerCase() === 'csv'
+            ? 'csv'
+            : 'json';
         const rawExtraction = extraction.result !== undefined ? extraction.result : (extraction.logs.length ? extraction.logs.join('\n') : undefined);
         const formattedExtraction = extractionFormat === 'csv' ? toCsvString(rawExtraction) : rawExtraction;
 
@@ -1169,4 +1237,4 @@ async function handleAgent(req, res) {
     }
 }
 
-module.exports = { handleAgent };
+module.exports = { handleAgent, setProgressReporter, setStopChecker };

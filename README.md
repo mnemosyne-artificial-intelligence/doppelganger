@@ -7,6 +7,18 @@ Doppelganger is a self-hosted, developer-focused browser automation and extracti
 
 This project is designed for local, controlled use cases. It does not claim to bypass protections and does not encourage unlawful activity.
 
+## Getting Started (npm)
+
+### Install
+```bash
+npm i @doppelgangerdev/doppelganger
+```
+
+### Run
+```bash
+npx doppelganger
+```
+
 ## Getting Started (Docker)
 
 ### Requirements

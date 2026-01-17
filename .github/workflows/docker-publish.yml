@@ -22,11 +22,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Mark workspace as safe for git
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -54,7 +49,6 @@ jobs:
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=raw,value=beta,enable=${{ github.ref == 'refs/heads/beta' }}
             type=semver,pattern={{version}}
-
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:

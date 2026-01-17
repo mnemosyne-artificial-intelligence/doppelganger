@@ -4,6 +4,8 @@ WORKDIR /app
 
 # Install deps (include dev deps for build)
 COPY package*.json ./
+ENV DOPPELGANGER_SKIP_PLAYWRIGHT_INSTALL=1 \
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 RUN npm ci --include=dev
 
 # Build frontend
@@ -16,6 +18,8 @@ WORKDIR /app
 
 # Install production deps only
 COPY package*.json ./
+ENV DOPPELGANGER_SKIP_PLAYWRIGHT_INSTALL=1 \
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 RUN npm ci --omit=dev
 
 # Ensure Playwright browsers + OS deps are available

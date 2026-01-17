@@ -51,7 +51,7 @@ jobs:
           tags: |
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=raw,value=beta,enable=${{ github.ref == 'refs/heads/beta' }}
-            type=semver,pattern={{version}},enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=${{ github.ref_name }},enable=${{ startsWith(github.ref, 'refs/tags/v') }}
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:

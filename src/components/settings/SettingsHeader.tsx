@@ -1,6 +1,6 @@
 interface SettingsHeaderProps {
-    tab: 'system' | 'data';
-    onTabChange: (tab: 'system' | 'data') => void;
+    tab: 'system' | 'data' | 'proxies';
+    onTabChange: (tab: 'system' | 'data' | 'proxies') => void;
 }
 
 const SettingsHeader: React.FC<SettingsHeaderProps> = ({ tab, onTabChange }) => {
@@ -11,7 +11,7 @@ const SettingsHeader: React.FC<SettingsHeaderProps> = ({ tab, onTabChange }) => 
                 <h2 className="text-4xl font-bold tracking-tighter text-white">Settings</h2>
             </div>
             <div className="flex bg-white/5 rounded-xl p-1 border border-white/5">
-                {(['system', 'data'] as const).map((t) => (
+                {(['system', 'data', 'proxies'] as const).map((t) => (
                     <button
                         key={t}
                         onClick={() => onTabChange(t)}

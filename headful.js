@@ -1,6 +1,7 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
+const { getProxySelection } = require('./proxy-rotation');
 
 const STORAGE_STATE_PATH = path.join(__dirname, 'storage_state.json');
 const STORAGE_STATE_FILE = (() => {
@@ -49,6 +50,8 @@ async function handleHeadful(req, res) {
     activeSession = { status: 'starting', startedAt: Date.now() };
 
     const url = req.body.url || req.query.url || 'https://www.google.com';
+    const rotateProxiesRaw = req.body.rotateProxies ?? req.query.rotateProxies;
+    const rotateProxies = String(rotateProxiesRaw).toLowerCase() === 'true' || rotateProxiesRaw === true;
 
     // We stick to the first UA in the list for headful mode to ensure consistency
     const selectedUA = userAgents[0];
@@ -57,7 +60,7 @@ async function handleHeadful(req, res) {
 
     let browser;
     try {
-        browser = await chromium.launch({
+        const launchOptions = {
             headless: false,
             channel: 'chrome',
             args: [
@@ -66,7 +69,13 @@ async function handleHeadful(req, res) {
                 '--window-size=1280,720',
                 '--window-position=80,80'
             ]
-        });
+        };
+        const selection = getProxySelection(rotateProxies);
+        if (selection.proxy) {
+            launchOptions.proxy = selection.proxy;
+        }
+        console.log(`[PROXY] Mode: ${selection.mode}; Target: ${selection.proxy ? selection.proxy.server : 'host_ip'}`);
+        browser = await chromium.launch(launchOptions);
 
         const contextOptions = {
             viewport: null,

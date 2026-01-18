@@ -123,6 +123,38 @@ curl -X POST http://localhost:11345/tasks/task_123/api \
   -d "{\"variables\":{\"query\":\"example.com\"}}"
 ```
 
+### Egress Proxy Rotation
+Doppelganger can rotate outbound browser traffic using a `proxies.json` file.
+
+Supported locations:
+- `data/proxies.json`
+
+Example format:
+```json
+[
+  "http://user:pass@proxy1.example.com:8000",
+  { "server": "http://proxy2.example.com:8000" },
+  { "server": "socks5://proxy3.example.com:1080", "username": "user", "password": "pass" }
+]
+```
+
+You can also manage proxies in the **Settings → Proxies** tab. Set a default proxy (or use host IP), and enable rotation per task via the **Rotate Proxies** toggle in the task editor.
+
+### IP Allowlist (Basic IP Auth)
+Set `ALLOWED_IPS` (comma-separated) or create `data/allowed_ips.json` to restrict access by client IP.
+
+Example:
+```bash
+export ALLOWED_IPS="127.0.0.1,192.168.1.10"
+```
+
+JSON format:
+```json
+["127.0.0.1", "192.168.1.10"]
+```
+
+If you're running behind a reverse proxy, set `TRUST_PROXY=1` so `X-Forwarded-For` is respected.
+
 ## Community and Presets
 Community-contributed presets or examples may be shared in the future.
 - Use community content at your own risk

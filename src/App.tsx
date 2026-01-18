@@ -120,6 +120,7 @@ export default function App() {
         wait: 3,
         selector: "",
         rotateUserAgents: false,
+        rotateProxies: false,
         humanTyping: false,
         stealth: {
             allowTypos: false,
@@ -254,6 +255,7 @@ export default function App() {
             wait: 3,
             selector: "",
             rotateUserAgents: false,
+            rotateProxies: false,
             humanTyping: false,
             stealth: {
                 allowTypos: false,
@@ -313,6 +315,7 @@ export default function App() {
                 naturalTyping: false
             };
         }
+        if (migratedTask.rotateProxies === undefined) migratedTask.rotateProxies = false;
         if (!migratedTask.extractionFormat) migratedTask.extractionFormat = 'json';
         if (migratedTask.includeShadowDom === undefined) migratedTask.includeShadowDom = true;
         const normalized = ensureActionIds(migratedTask);
@@ -590,6 +593,7 @@ export default function App() {
         if (!merged.stealth) merged.stealth = base.stealth;
         if (!merged.variables || Array.isArray(merged.variables)) merged.variables = {};
         if (!Array.isArray(merged.actions)) merged.actions = [];
+        if (merged.rotateProxies === undefined) merged.rotateProxies = false;
         delete merged.versions;
         delete merged.last_opened;
         return merged;

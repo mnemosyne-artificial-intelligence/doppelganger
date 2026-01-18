@@ -22,6 +22,7 @@
     "agent.js",
     "headful.js",
     "scrape.js",
+    "proxy-rotation.js",
     "start-vnc.sh",
     "scripts/postinstall.js",
     "README.md",

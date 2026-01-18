@@ -11,7 +11,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onNavigate, onNewTask, onLogout, curr
     return (
         <aside className="w-20 h-full border-r border-white/10 glass flex flex-col items-center py-8 shrink-0 z-50">
             <button onClick={() => onNavigate('dashboard')} className="mb-12 hover:opacity-80 transition-opacity">
-                <img src="/icon.png" alt="Logo" className="w-9 h-9" onError={(e) => { e.currentTarget.src = '/icon.png' }} />
+                <img src="/icon.png" alt="Logo" className="w-12 h-12" onError={(e) => { e.currentTarget.src = '/icon.png' }} />
             </button>
 
             <div className="flex-1 flex flex-col gap-6">

@@ -31,6 +31,11 @@ if (!SESSION_SECRET) {
 }
 
 const USERS_FILE = path.join(__dirname, 'data', 'users.json');
+const ALLOWED_IPS_FILE = path.join(__dirname, 'data', 'allowed_ips.json');
+const TRUST_PROXY = ['1', 'true', 'yes'].includes(String(process.env.TRUST_PROXY || '').toLowerCase());
+if (TRUST_PROXY) {
+    app.set('trust proxy', true);
+}
 
 // Ensure data directory exists
 if (!fs.existsSync(path.join(__dirname, 'data'))) {
@@ -227,9 +232,96 @@ function generateApiKey() {
     return crypto.randomBytes(32).toString('hex');
 }
 
+let allowedIpsCache = { env: null, file: null, mtimeMs: 0, set: null };
+
+const normalizeIp = (raw) => {
+    if (!raw) return '';
+    let ip = String(raw).split(',')[0].trim();
+    if (ip.startsWith('::ffff:')) ip = ip.slice(7);
+    if (ip.startsWith('[') && ip.endsWith(']')) ip = ip.slice(1, -1);
+    if (ip.includes('%')) ip = ip.split('%')[0];
+    return ip;
+};
+
+const parseIpList = (input) => {
+    if (!input) return [];
+    if (Array.isArray(input)) return input.map(String);
+    if (typeof input === 'string') {
+        return input.split(',').map((entry) => entry.trim()).filter(Boolean);
+    }
+    return [];
+};
+
+const loadAllowedIps = () => {
+    const envRaw = String(process.env.ALLOWED_IPS || '').trim();
+    let filePath = null;
+    let fileMtime = 0;
+    let fileEntries = [];
+
+    try {
+        if (fs.existsSync(ALLOWED_IPS_FILE)) {
+            filePath = ALLOWED_IPS_FILE;
+            const stat = fs.statSync(ALLOWED_IPS_FILE);
+            fileMtime = stat.mtimeMs || 0;
+        }
+    } catch {
+        filePath = null;
+    }
+
+    if (
+        allowedIpsCache.set &&
+        allowedIpsCache.env === envRaw &&
+        allowedIpsCache.file === filePath &&
+        allowedIpsCache.mtimeMs === fileMtime
+    ) {
+        return allowedIpsCache.set;
+    }
+
+    if (filePath) {
+        try {
+            const raw = fs.readFileSync(filePath, 'utf8');
+            const parsed = JSON.parse(raw);
+            fileEntries = Array.isArray(parsed)
+                ? parsed
+                : Array.isArray(parsed.allowedIps)
+                    ? parsed.allowedIps
+                    : [];
+        } catch {
+            fileEntries = [];
+        }
+    }
+
+    const combined = [
+        ...parseIpList(envRaw),
+        ...parseIpList(fileEntries)
+    ]
+        .map(normalizeIp)
+        .filter(Boolean);
+
+    const set = new Set(combined);
+    allowedIpsCache = { env: envRaw, file: filePath, mtimeMs: fileMtime, set };
+    return set;
+};
+
+const isIpAllowed = (ip) => {
+    const allowlist = loadAllowedIps();
+    if (!allowlist || allowlist.size === 0) return true;
+    return allowlist.has(normalizeIp(ip));
+};
+
+const requireIpAllowlist = (req, res, next) => {
+    const ip = req.ip || req.connection?.remoteAddress || req.socket?.remoteAddress;
+    if (isIpAllowed(ip)) return next();
+    if (req.xhr || req.path.startsWith('/api/')) {
+        return res.status(403).json({ error: 'IP_NOT_ALLOWED' });
+    }
+    return res.status(403).send('Forbidden');
+};
+
 const { handleScrape } = require('./scrape');
 const { handleAgent, setProgressReporter, setStopChecker } = require('./agent');
 const { handleHeadful, stopHeadful } = require('./headful');
+const { listProxies, addProxy, updateProxy, deleteProxy, setDefaultProxy, setIncludeDefaultInRotation } = require('./proxy-rotation');
 
 setProgressReporter(sendExecutionUpdate);
 setStopChecker((runId) => {
@@ -241,6 +333,7 @@ setStopChecker((runId) => {
     return false;
 });
 
+app.use(requireIpAllowlist);
 app.use(express.json({ limit: '50mb' }));
 const SESSION_TTL_SECONDS = 10 * 365 * 24 * 60 * 60; // 10 years
 
@@ -378,6 +471,84 @@ app.post('/api/settings/api-key', requireAuthForSettings, (req, res) => {
     } catch (e) {
         console.error('[API_KEY] Save failed:', e);
         res.status(500).json({ error: 'API_KEY_SAVE_FAILED', message: e.message });
+    }
+});
+
+// --- PROXY SETTINGS ---
+app.get('/api/settings/proxies', requireAuthForSettings, (_req, res) => {
+    try {
+        res.json(listProxies());
+    } catch (e) {
+        console.error('[PROXIES] Load failed:', e);
+        res.status(500).json({ error: 'PROXY_LOAD_FAILED' });
+    }
+});
+
+app.post('/api/settings/proxies', requireAuthForSettings, (req, res) => {
+    const { server, username, password, label } = req.body || {};
+    if (!server || typeof server !== 'string') {
+        return res.status(400).json({ error: 'MISSING_SERVER' });
+    }
+    try {
+        const result = addProxy({ server, username, password, label });
+        if (!result) return res.status(400).json({ error: 'INVALID_PROXY' });
+        res.json(listProxies());
+    } catch (e) {
+        console.error('[PROXIES] Add failed:', e);
+        res.status(500).json({ error: 'PROXY_SAVE_FAILED' });
+    }
+});
+
+app.put('/api/settings/proxies/:id', requireAuthForSettings, (req, res) => {
+    const id = String(req.params.id || '').trim();
+    if (!id || id === 'host') return res.status(400).json({ error: 'INVALID_ID' });
+    const { server, username, password, label } = req.body || {};
+    if (!server || typeof server !== 'string') {
+        return res.status(400).json({ error: 'MISSING_SERVER' });
+    }
+    try {
+        const result = updateProxy(id, { server, username, password, label });
+        if (!result) return res.status(404).json({ error: 'PROXY_NOT_FOUND' });
+        res.json(listProxies());
+    } catch (e) {
+        console.error('[PROXIES] Update failed:', e);
+        res.status(500).json({ error: 'PROXY_UPDATE_FAILED' });
+    }
+});
+
+app.delete('/api/settings/proxies/:id', requireAuthForSettings, (req, res) => {
+    const id = String(req.params.id || '').trim();
+    if (!id) return res.status(400).json({ error: 'MISSING_ID' });
+    try {
+        const result = deleteProxy(id);
+        if (!result) return res.status(404).json({ error: 'PROXY_NOT_FOUND' });
+        res.json(listProxies());
+    } catch (e) {
+        console.error('[PROXIES] Delete failed:', e);
+        res.status(500).json({ error: 'PROXY_DELETE_FAILED' });
+    }
+});
+
+app.post('/api/settings/proxies/default', requireAuthForSettings, (req, res) => {
+    const id = req.body && req.body.id ? String(req.body.id) : '';
+    try {
+        const result = setDefaultProxy(id || null);
+        if (!result) return res.status(404).json({ error: 'PROXY_NOT_FOUND' });
+        res.json(listProxies());
+    } catch (e) {
+        console.error('[PROXIES] Default failed:', e);
+        res.status(500).json({ error: 'PROXY_DEFAULT_FAILED' });
+    }
+});
+
+app.post('/api/settings/proxies/rotation', requireAuthForSettings, (req, res) => {
+    const enabled = !!(req.body && req.body.includeDefaultInRotation);
+    try {
+        setIncludeDefaultInRotation(enabled);
+        res.json(listProxies());
+    } catch (e) {
+        console.error('[PROXIES] Rotation toggle failed:', e);
+        res.status(500).json({ error: 'PROXY_ROTATION_FAILED' });
     }
 });
 
@@ -913,6 +1084,14 @@ findAvailablePort(port, 20)
             console.log(`Server running at http://localhost:${displayPort}`);
         });
         server.on('upgrade', (req, socket, head) => {
+            if (!isIpAllowed(req.socket?.remoteAddress)) {
+                try {
+                    socket.destroy();
+                } catch {
+                    // ignore
+                }
+                return;
+            }
             const handled = proxyWebsockify(req, socket, head);
             if (!handled) {
                 socket.destroy();

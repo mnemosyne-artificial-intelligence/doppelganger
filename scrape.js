@@ -2,6 +2,7 @@ const { chromium } = require('playwright');
 const { JSDOM } = require('jsdom');
 const fs = require('fs');
 const path = require('path');
+const { getProxySelection } = require('./proxy-rotation');
 
 const STORAGE_STATE_PATH = path.join(__dirname, 'storage_state.json');
 const STORAGE_STATE_FILE = (() => {
@@ -78,6 +79,8 @@ async function handleScrape(req, res) {
     const waitInput = req.body.wait || req.query.wait;
     const waitTime = waitInput ? parseFloat(waitInput) * 1000 : 2000;
     const rotateUserAgents = req.body.rotateUserAgents || req.query.rotateUserAgents || false;
+    const rotateProxiesRaw = req.body.rotateProxies ?? req.query.rotateProxies;
+    const rotateProxies = String(rotateProxiesRaw).toLowerCase() === 'true' || rotateProxiesRaw === true;
     const includeShadowDomRaw = req.body.includeShadowDom ?? req.query.includeShadowDom;
     const includeShadowDom = includeShadowDomRaw === undefined
         ? true
@@ -99,7 +102,7 @@ async function handleScrape(req, res) {
     let browser;
     try {
         // Use 'chrome' channel to use a real installed browser instead of default Chromium
-        browser = await chromium.launch({
+        const launchOptions = {
             headless: true,
             channel: 'chrome',
             args: [
@@ -109,7 +112,13 @@ async function handleScrape(req, res) {
                 '--hide-scrollbars',
                 '--mute-audio'
             ]
-        });
+        };
+        const selection = getProxySelection(rotateProxies);
+        if (selection.proxy) {
+            launchOptions.proxy = selection.proxy;
+        }
+        console.log(`[PROXY] Mode: ${selection.mode}; Target: ${selection.proxy ? selection.proxy.server : 'host_ip'}`);
+        browser = await chromium.launch(launchOptions);
 
         const contextOptions = {
             userAgent: selectedUA,

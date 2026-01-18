@@ -57,6 +57,7 @@ export interface Task {
     wait: number;
     selector?: string;
     rotateUserAgents: boolean;
+    rotateProxies: boolean;
     humanTyping: boolean;
     stealth: StealthConfig;
     actions: Action[];

@@ -2,6 +2,7 @@ node_modules
 dist
 data
 storage_state.json
+proxies.json
 .git
 .env
 public/screenshots

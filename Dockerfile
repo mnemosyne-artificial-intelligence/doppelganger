@@ -17,6 +17,17 @@ FROM mcr.microsoft.com/playwright:v1.40.0-focal AS runtime
 
 WORKDIR /app
 
+# Install VNC + noVNC tooling for containerized headful viewer
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        novnc \
+        websockify \
+        x11vnc \
+        xvfb \
+        curl \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install production deps only
 COPY package*.json ./
 COPY scripts ./scripts
@@ -31,8 +42,10 @@ RUN npx playwright install --with-deps chromium chrome firefox
 COPY --from=build /app/dist /app/dist
 COPY --from=build /app/public /app/public
 COPY --from=build /app/*.js /app/
+COPY --from=build /app/start-vnc.sh /app/start-vnc.sh
+RUN chmod +x /app/start-vnc.sh
 
 EXPOSE 11345 54311
 ENV NODE_ENV=production
 
-CMD ["node", "server.js"]
+CMD ["/app/start-vnc.sh"]

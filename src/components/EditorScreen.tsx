@@ -151,6 +151,8 @@ const EditorScreen: React.FC<EditorScreenProps> = ({
     const [versionPreview, setVersionPreview] = useState<{ id: string; timestamp: number; snapshot: Task } | null>(null);
     const [versionPreviewLoading, setVersionPreviewLoading] = useState(false);
     const [actionStatusById, setActionStatusById] = useState<Record<string, 'running' | 'success' | 'error' | 'skipped'>>({});
+    const [proxyList, setProxyList] = useState<{ id: string }[]>([]);
+    const [proxyListLoaded, setProxyListLoaded] = useState(false);
     const getStoredSplitPercent = () => {
         try {
             const stored = localStorage.getItem('doppelganger.layout.leftWidthPct');
@@ -176,6 +178,7 @@ const EditorScreen: React.FC<EditorScreenProps> = ({
     });
     const resizingRef = useRef(false);
     const availableTasks = tasks.filter((task) => String(task.id || '') !== String(currentTask.id || ''));
+    const rotateProxiesDisabled = proxyListLoaded && proxyList.length === 1 && proxyList[0]?.id === 'host';
 
     const MAX_COPY_CHARS = 1000000;
 
@@ -226,6 +229,33 @@ const EditorScreen: React.FC<EditorScreenProps> = ({
             onNotify('Copy failed.', 'error');
         }
     };
+
+    useEffect(() => {
+        let cancelled = false;
+        const loadProxies = async () => {
+            try {
+                const res = await fetch('/api/settings/proxies', { credentials: 'include' });
+                if (!res.ok) throw new Error('Failed to load proxies');
+                const data = await res.json();
+                if (cancelled) return;
+                setProxyList(Array.isArray(data.proxies) ? data.proxies : []);
+            } catch {
+                if (!cancelled) setProxyList([]);
+            } finally {
+                if (!cancelled) setProxyListLoaded(true);
+            }
+        };
+        loadProxies();
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    useEffect(() => {
+        if (rotateProxiesDisabled && currentTask.rotateProxies) {
+            setCurrentTask({ ...currentTask, rotateProxies: false });
+        }
+    }, [rotateProxiesDisabled, currentTask, setCurrentTask]);
 
     const blockStartTypes = new Set(['if', 'while', 'repeat', 'foreach', 'on_error']);
     const normalizeVarName = (raw: string) => {
@@ -1245,14 +1275,18 @@ return JSON.stringify(links, null, 2);`}
                                     />
                                     <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest group-hover:text-white">Rotate UA</span>
                                 </label>
-                                <label className="flex items-center gap-3 p-3.5 rounded-2xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.05] transition-all cursor-pointer group">
+                                <label
+                                    className={`flex items-center gap-3 p-3.5 rounded-2xl bg-white/[0.02] border border-white/5 transition-all ${rotateProxiesDisabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-white/[0.05] cursor-pointer group'}`}
+                                    title={rotateProxiesDisabled ? 'Add a proxy to enable rotation.' : 'Rotate proxies per task.'}
+                                >
                                     <input
                                         type="checkbox"
                                         checked={currentTask.rotateProxies}
                                         onChange={(e) => setCurrentTask({ ...currentTask, rotateProxies: e.target.checked })}
+                                        disabled={rotateProxiesDisabled}
                                         className="w-4 h-4 rounded border-white/20 bg-transparent"
                                     />
-                                    <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest group-hover:text-white">Rotate Proxies</span>
+                                    <span className={`text-[10px] font-bold text-gray-500 uppercase tracking-widest ${rotateProxiesDisabled ? '' : 'group-hover:text-white'}`}>Rotate Proxies</span>
                                 </label>
                                 <label className="flex items-center gap-3 p-3.5 rounded-2xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.05] transition-all cursor-pointer group">
                                     <input

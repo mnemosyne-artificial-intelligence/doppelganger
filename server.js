@@ -982,7 +982,21 @@ app.use('/screenshots', express.static(screenshotsDir));
 app.use(express.static(DIST_DIR));
 
 app.get('/api/headful/status', (req, res) => {
-    const useNovnc = !!process.env.DISPLAY && novncEnabled;
+    const detectContainer = () => {
+        try {
+            if (fs.existsSync('/.dockerenv')) return true;
+        } catch {
+            // ignore
+        }
+        try {
+            const cgroup = fs.readFileSync('/proc/1/cgroup', 'utf8');
+            if (/docker|kubepods|containerd|podman/i.test(cgroup)) return true;
+        } catch {
+            // ignore
+        }
+        return false;
+    };
+    const useNovnc = detectContainer() && novncEnabled;
     res.json({ useNovnc });
 });
 

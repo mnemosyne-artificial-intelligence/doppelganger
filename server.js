@@ -602,6 +602,15 @@ app.get('/api/tasks', requireAuth, (req, res) => {
     res.json(loadTasks());
 });
 
+app.get('/api/tasks/list', requireApiKey, (req, res) => {
+    const tasks = loadTasks();
+    const summary = tasks.map((task) => ({
+        id: task.id,
+        name: task.name || task.id
+    }));
+    res.json({ tasks: summary });
+});
+
 app.post('/api/tasks', requireAuth, (req, res) => {
     const tasks = loadTasks();
     const newTask = req.body;

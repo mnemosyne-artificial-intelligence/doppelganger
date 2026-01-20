@@ -200,7 +200,7 @@ const ProxiesPanel: React.FC<ProxiesPanelProps> = ({
                     onClick={() => fileInputRef.current?.click()}
                     className="px-6 py-3 rounded-2xl text-[9px] font-bold uppercase tracking-widest border border-white/10 text-white hover:bg-white/5 transition-all"
                 >
-                    Import .txt
+                    Import
                 </button>
                 <button
                     onClick={() => onSetDefault('host')}

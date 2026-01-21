@@ -170,11 +170,32 @@ const addProxies = (entries) => {
     const normalizedEntries = entries.map(normalizeProxy).filter(Boolean);
     if (normalizedEntries.length === 0) return null;
     const config = loadProxyConfig();
-    const additions = normalizedEntries.map((proxy) => ({
-        ...proxy,
-        id: `proxy_${crypto.randomBytes(6).toString('hex')}`
-    }));
-    const proxies = [...config.proxies, ...additions];
+    const existingByServer = new Map(
+        config.proxies.map((proxy) => [String(proxy.server || '').toLowerCase(), proxy])
+    );
+    const seenServers = new Set();
+    const updates = [];
+    const additions = [];
+
+    normalizedEntries.forEach((proxy) => {
+        const serverKey = String(proxy.server || '').toLowerCase();
+        if (!serverKey || seenServers.has(serverKey)) return;
+        seenServers.add(serverKey);
+        const existing = existingByServer.get(serverKey);
+        if (existing) {
+            updates.push({ ...existing, ...proxy, id: existing.id });
+        } else {
+            additions.push({ ...proxy, id: `proxy_${crypto.randomBytes(6).toString('hex')}` });
+        }
+    });
+
+    const merged = config.proxies.map((proxy) => {
+        const serverKey = String(proxy.server || '').toLowerCase();
+        const replacement = updates.find((item) => String(item.server || '').toLowerCase() === serverKey);
+        return replacement || proxy;
+    });
+
+    const proxies = [...merged, ...additions];
     const next = { ...config, proxies };
     return saveProxyConfig(next);
 };

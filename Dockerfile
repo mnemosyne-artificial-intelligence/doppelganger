@@ -39,7 +39,8 @@ ENV DOPPELGANGER_SKIP_PLAYWRIGHT_INSTALL=1 \
     PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 RUN npm ci --omit=dev
 
-# Playwright base image already includes browsers and OS deps.
+# Ensure Playwright browsers + OS deps are available
+RUN npx playwright install --with-deps chromium chrome firefox
 
 # Copy server and built assets
 COPY --from=build /app/dist /app/dist

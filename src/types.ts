@@ -103,6 +103,14 @@ export interface Execution {
     result?: any;
 }
 
+export interface CaptureEntry {
+    name: string;
+    url: string;
+    size: number;
+    modified: number;
+    type: 'screenshot' | 'recording';
+}
+
 export interface User {
     id: number;
     name: string;

@@ -1,19 +1,34 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { FixedSizeList, ListChildComponentProps } from 'react-window';
 import { useNavigate } from 'react-router-dom';
-import { ConfirmRequest } from '../types';
-
-interface CaptureEntry {
-    name: string;
-    url: string;
-    size: number;
-    modified: number;
-    type: 'screenshot' | 'recording';
-}
+import { ConfirmRequest, CaptureEntry } from '../types';
+import CaptureCard from './CaptureCard';
 
 interface CapturesScreenProps {
     onConfirm: (request: string | ConfirmRequest) => Promise<boolean>;
     onNotify: (message: string, tone?: 'success' | 'error') => void;
 }
+
+const CAPTURE_CARD_HEIGHT = 360;
+const CAPTURE_CARD_SPACING = 12;
+const CAPTURE_LIST_ITEM_SIZE = CAPTURE_CARD_HEIGHT + CAPTURE_CARD_SPACING;
+const CAPTURE_LIST_MAX_VISIBLE = 6;
+const CAPTURE_OVERSCAN = 4;
+
+interface CaptureListData {
+    captures: CaptureEntry[];
+    onDelete: (name: string) => void;
+}
+
+const renderCaptureItem = ({ index, style, data }: ListChildComponentProps<CaptureListData>) => {
+    const capture = data.captures[index];
+    if (!capture) return null;
+    return (
+        <div style={{ ...style, paddingBottom: CAPTURE_CARD_SPACING }}>
+            <CaptureCard capture={capture} onDelete={data.onDelete} />
+        </div>
+    );
+};
 
 const CapturesScreen: React.FC<CapturesScreenProps> = ({ onConfirm, onNotify }) => {
     const navigate = useNavigate();
@@ -33,7 +48,7 @@ const CapturesScreen: React.FC<CapturesScreenProps> = ({ onConfirm, onNotify }) 
         }
     };
 
-    const deleteCapture = async (name: string) => {
+    const deleteCapture = useCallback(async (name: string) => {
         const confirmed = await onConfirm(`Delete capture ${name}?`);
         if (!confirmed) return;
         const res = await fetch(`/api/data/captures/${encodeURIComponent(name)}`, { method: 'DELETE' });
@@ -43,7 +58,7 @@ const CapturesScreen: React.FC<CapturesScreenProps> = ({ onConfirm, onNotify }) 
         } else {
             onNotify('Delete failed.', 'error');
         }
-    };
+    }, [onConfirm, onNotify]);
 
     useEffect(() => {
         loadCaptures();
@@ -84,42 +99,20 @@ const CapturesScreen: React.FC<CapturesScreenProps> = ({ onConfirm, onNotify }) 
                         <div className="text-[9px] text-gray-600 uppercase tracking-widest">No captures found.</div>
                     )}
                     {!loading && captures.length > 0 && (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            {captures.map((capture) => (
-                                <div key={capture.name} className="rounded-2xl border border-white/10 bg-white/[0.02] overflow-hidden">
-                                    <div className="p-3 border-b border-white/10 flex items-center justify-between">
-                                        <div className="text-[9px] font-bold text-white uppercase tracking-widest">
-                                            {capture.type === 'recording' ? 'Recording' : 'Screenshot'}
-                                        </div>
-                                        <div className="flex items-center gap-2">
-                                            <a
-                                                href={capture.url}
-                                                target="_blank"
-                                                rel="noreferrer"
-                                                className="text-[9px] font-bold uppercase tracking-widest text-blue-300 hover:text-blue-200"
-                                            >
-                                                Open
-                                            </a>
-                                            <button
-                                                onClick={() => deleteCapture(capture.name)}
-                                                className="text-[9px] font-bold uppercase tracking-widest text-red-300 hover:text-red-200"
-                                            >
-                                                Delete
-                                            </button>
-                                        </div>
-                                    </div>
-                                    <div className="bg-black">
-                                        {capture.type === 'recording' ? (
-                                            <video src={capture.url} controls className="w-full h-64 object-contain bg-black" />
-                                        ) : (
-                                            <img src={capture.url} className="w-full h-64 object-contain bg-black" />
-                                        )}
-                                    </div>
-                                    <div className="p-3 text-[9px] text-gray-500 uppercase tracking-widest">
-                                        {capture.name}
-                                    </div>
-                                </div>
-                            ))}
+                        <div className="space-y-4">
+                            <FixedSizeList
+                                height={Math.min(
+                                    Math.max(CAPTURE_LIST_ITEM_SIZE, captures.length * CAPTURE_LIST_ITEM_SIZE),
+                                    CAPTURE_LIST_ITEM_SIZE * CAPTURE_LIST_MAX_VISIBLE
+                                )}
+                                width="100%"
+                                itemCount={captures.length}
+                                itemSize={CAPTURE_LIST_ITEM_SIZE}
+                                overscanCount={CAPTURE_OVERSCAN}
+                                itemData={{ captures, onDelete: deleteCapture }}
+                            >
+                                {renderCaptureItem}
+                            </FixedSizeList>
                         </div>
                     )}
                 </div>

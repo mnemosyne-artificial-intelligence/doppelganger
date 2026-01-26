@@ -1,7 +1,64 @@
-import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate, type NavigateFunction } from 'react-router-dom';
 import { RefreshCw, Trash2, Monitor, Cloud } from 'lucide-react';
 import { Execution, ConfirmRequest } from '../types';
+import { FixedSizeList, ListChildComponentProps } from 'react-window';
+
+const EXECUTION_ITEM_SIZE = 140;
+const EXECUTION_LIST_MAX_VISIBLE = 6;
+const EXECUTION_OVERSCAN = 4;
+
+interface ExecutionListItemData {
+    items: Execution[];
+    deleteExecution: (id: string) => void;
+    navigate: NavigateFunction;
+}
+
+const renderExecutionRow = ({ index, style, data }: ListChildComponentProps<ExecutionListItemData>) => {
+    const exec = data.items[index];
+    if (!exec) return null;
+    return (
+        <div
+            style={style}
+            onClick={() => data.navigate(`/executions/${exec.id}`)}
+            onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    data.navigate(`/executions/${exec.id}`);
+                }
+            }}
+            role="button"
+            tabIndex={0}
+            className="glass-card w-full rounded-2xl p-5 flex items-center gap-4 text-left hover:bg-white/[0.06] transition-all cursor-pointer"
+        >
+            <div className="w-10 h-10 rounded-2xl bg-white/5 flex items-center justify-center text-gray-400">
+                {exec.source === 'api' ? <Cloud className="w-5 h-5" /> : <Monitor className="w-5 h-5" />}
+            </div>
+            <div className="flex-1 min-w-0 space-y-1">
+                <div className="text-[10px] font-bold text-white uppercase tracking-widest truncate">
+                    {exec.taskName || exec.mode}
+                </div>
+                <div className="text-[8px] text-gray-500 uppercase tracking-[0.2em]">
+                    {new Date(exec.timestamp).toLocaleString()} | {exec.source} | {exec.mode} | {exec.status} | {exec.durationMs}ms
+                </div>
+                {exec.url && (
+                    <div className="text-[9px] text-white/50 truncate font-mono">
+                        {exec.url}
+                    </div>
+                )}
+            </div>
+            <button
+                onClick={(event) => {
+                    event.stopPropagation();
+                    data.deleteExecution(exec.id);
+                }}
+                className="px-4 py-2 text-[9px] font-bold uppercase tracking-widest rounded-xl bg-red-500/5 border border-red-500/10 text-red-400 hover:bg-red-500/10 transition-all"
+            >
+                Delete
+            </button>
+        </div>
+    );
+};
 
 interface ExecutionsScreenProps {
     onConfirm: (request: string | ConfirmRequest) => Promise<boolean>;
@@ -14,7 +71,7 @@ const ExecutionsScreen: React.FC<ExecutionsScreenProps> = ({ onConfirm, onNotify
     const [filter, setFilter] = useState<'all' | 'editor' | 'api'>('all');
     const [loading, setLoading] = useState(false);
 
-    const loadExecutions = async () => {
+    const loadExecutions = useCallback(async () => {
         setLoading(true);
         try {
             const res = await fetch('/api/executions');
@@ -26,9 +83,9 @@ const ExecutionsScreen: React.FC<ExecutionsScreenProps> = ({ onConfirm, onNotify
         } finally {
             setLoading(false);
         }
-    };
+    }, []);
 
-    const clearExecutions = async () => {
+    const clearExecutions = useCallback(async () => {
         const confirmed = await onConfirm('Clear all executions?');
         if (!confirmed) return;
         const res = await fetch('/api/executions/clear', { method: 'POST' });
@@ -38,9 +95,9 @@ const ExecutionsScreen: React.FC<ExecutionsScreenProps> = ({ onConfirm, onNotify
         } else {
             onNotify('Clear failed.', 'error');
         }
-    };
+    }, [loadExecutions, onConfirm, onNotify]);
 
-    const deleteExecution = async (id: string) => {
+    const deleteExecution = useCallback(async (id: string) => {
         const confirmed = await onConfirm('Delete this execution?');
         if (!confirmed) return;
         const res = await fetch(`/api/executions/${id}`, { method: 'DELETE' });
@@ -50,16 +107,18 @@ const ExecutionsScreen: React.FC<ExecutionsScreenProps> = ({ onConfirm, onNotify
         } else {
             onNotify('Delete failed.', 'error');
         }
-    };
+    }, [onConfirm, onNotify]);
 
     useEffect(() => {
         loadExecutions();
-    }, []);
+    }, [loadExecutions]);
 
-    const filtered = executions.filter((exec) => {
-        if (filter === 'all') return true;
-        return exec.source === filter;
-    });
+    const filtered = useMemo(() => {
+        return executions.filter((exec) => {
+            if (filter === 'all') return true;
+            return exec.source === filter;
+        });
+    }, [executions, filter]);
 
     return (
         <main className="flex-1 p-12 overflow-y-auto custom-scrollbar animate-in fade-in duration-500">
@@ -105,49 +164,21 @@ const ExecutionsScreen: React.FC<ExecutionsScreenProps> = ({ onConfirm, onNotify
                     <div className="text-[9px] text-gray-600 uppercase tracking-widest">No executions found.</div>
                 )}
 
-                <div className="space-y-3">
-                    {filtered.map((exec) => (
-                        <div
-                            key={exec.id}
-                            onClick={() => navigate(`/executions/${exec.id}`)}
-                            onKeyDown={(event) => {
-                                if (event.key === 'Enter' || event.key === ' ') {
-                                    event.preventDefault();
-                                    navigate(`/executions/${exec.id}`);
-                                }
-                            }}
-                            role="button"
-                            tabIndex={0}
-                            className="glass-card w-full rounded-2xl p-5 flex items-center gap-4 text-left hover:bg-white/[0.06] transition-all cursor-pointer"
-                        >
-                            <div className="w-10 h-10 rounded-2xl bg-white/5 flex items-center justify-center text-gray-400">
-                                {exec.source === 'api' ? <Cloud className="w-5 h-5" /> : <Monitor className="w-5 h-5" />}
-                            </div>
-                            <div className="flex-1 min-w-0 space-y-1">
-                                <div className="text-[10px] font-bold text-white uppercase tracking-widest truncate">
-                                    {exec.taskName || exec.mode}
-                                </div>
-                                <div className="text-[8px] text-gray-500 uppercase tracking-[0.2em]">
-                                    {new Date(exec.timestamp).toLocaleString()} | {exec.source} | {exec.mode} | {exec.status} | {exec.durationMs}ms
-                                </div>
-                                {exec.url && (
-                                    <div className="text-[9px] text-white/50 truncate font-mono">
-                                        {exec.url}
-                                    </div>
-                                )}
-                            </div>
-                            <button
-                                onClick={(event) => {
-                                    event.stopPropagation();
-                                    deleteExecution(exec.id);
-                                }}
-                                className="px-4 py-2 text-[9px] font-bold uppercase tracking-widest rounded-xl bg-red-500/5 border border-red-500/10 text-red-400 hover:bg-red-500/10 transition-all"
-                            >
-                                Delete
-                            </button>
-                        </div>
-                    ))}
-                </div>
+                {!loading && filtered.length > 0 && (
+                    <FixedSizeList
+                        height={Math.min(
+                            Math.max(EXECUTION_ITEM_SIZE, filtered.length * EXECUTION_ITEM_SIZE),
+                            EXECUTION_ITEM_SIZE * EXECUTION_LIST_MAX_VISIBLE
+                        )}
+                        itemCount={filtered.length}
+                        itemSize={EXECUTION_ITEM_SIZE}
+                        width="100%"
+                        overscanCount={EXECUTION_OVERSCAN}
+                        itemData={{ items: filtered, deleteExecution, navigate }}
+                    >
+                        {renderExecutionRow}
+                    </FixedSizeList>
+                )}
             </div>
         </main>
     );

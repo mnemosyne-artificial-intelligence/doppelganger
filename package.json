@@ -46,6 +46,7 @@
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "react-router-dom": "^7.11.0",
+    "react-window": "^1.8.8",
     "session-file-store": "^1.5.0"
   },
   "devDependencies": {
@@ -53,6 +54,7 @@
     "@types/node": "^25.0.3",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
+    "@types/react-window": "^1.8.8",
     "@vitejs/plugin-react": "^5.1.2",
     "autoprefixer": "^10.4.23",
     "cross-env": "^10.1.0",

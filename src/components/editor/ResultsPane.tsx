@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, Copy, Terminal } from 'lucide-react';
-import { ConfirmRequest, Results } from '../../types';
+import { ConfirmRequest, Results, CaptureEntry } from '../../types';
+import { FixedSizeList, ListChildComponentProps } from 'react-window';
+import CaptureCard from '../CaptureCard';
 import CodeEditor from '../CodeEditor';
 import { SyntaxLanguage } from '../../utils/syntaxHighlight';
 
@@ -23,6 +25,21 @@ const MAX_PREVIEW_KEYS = 200;
 const MAX_COPY_CHARS = 1000000;
 const MAX_COPY_ITEMS = 2000;
 const MAX_COPY_KEYS = 2000;
+const CAPTURE_MODAL_ITEM_HEIGHT = 360;
+const CAPTURE_MODAL_ITEM_SPACING = 12;
+const CAPTURE_MODAL_ITEM_SIZE = CAPTURE_MODAL_ITEM_HEIGHT + CAPTURE_MODAL_ITEM_SPACING;
+const CAPTURE_MODAL_MAX_VISIBLE = 4;
+const CAPTURE_MODAL_OVERSCAN = 4;
+
+const renderCaptureModalItem = ({ index, style, data }: ListChildComponentProps<CaptureEntry[]>) => {
+    const capture = data[index];
+    if (!capture) return null;
+    return (
+        <div style={{ ...style, paddingBottom: CAPTURE_MODAL_ITEM_SPACING }}>
+            <CaptureCard capture={capture} />
+        </div>
+    );
+};
 
 const formatSize = (chars: number) => `${(chars / (1024 * 1024)).toFixed(2)} MB`;
 const normalizeBoolean = (value: any) => {
@@ -259,7 +276,7 @@ const ResultsPane: React.FC<ResultsPaneProps> = ({ results, pinnedResults, isExe
     const [headfulViewer, setHeadfulViewer] = useState<'checking' | 'native' | 'novnc'>('checking');
     const [capturesOpen, setCapturesOpen] = useState(false);
     const [capturesLoading, setCapturesLoading] = useState(false);
-    const [captures, setCaptures] = useState<{ name: string; url: string; size: number; modified: number; type: 'screenshot' | 'recording' }[]>([]);
+    const [captures, setCaptures] = useState<CaptureEntry[]>([]);
     const headfulFrameRef = useRef<HTMLDivElement | null>(null);
     const activeResults = resultView === 'pinned' && pinnedResults ? pinnedResults : results;
     const tableData = getTableData(activeResults?.data);
@@ -519,7 +536,7 @@ const ResultsPane: React.FC<ResultsPaneProps> = ({ results, pinnedResults, isExe
                                 Close
                             </button>
                         </div>
-                        <div className="p-6 overflow-y-auto custom-scrollbar space-y-4">
+                        <div className="p-6 overflow-y-auto custom-scrollbar">
                             {capturesLoading && (
                                 <div className="text-[9px] text-gray-500 uppercase tracking-widest">Loading captures...</div>
                             )}
@@ -527,35 +544,19 @@ const ResultsPane: React.FC<ResultsPaneProps> = ({ results, pinnedResults, isExe
                                 <div className="text-[9px] text-gray-600 uppercase tracking-widest">No captures found.</div>
                             )}
                             {!capturesLoading && captures.length > 0 && (
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    {captures.map((capture) => (
-                                        <div key={capture.name} className="rounded-2xl border border-white/10 bg-white/[0.02] overflow-hidden">
-                                            <div className="p-3 border-b border-white/10 flex items-center justify-between">
-                                                <div className="text-[9px] font-bold text-white uppercase tracking-widest">
-                                                    {capture.type === 'recording' ? 'Recording' : 'Screenshot'}
-                                                </div>
-                                                <a
-                                                    href={capture.url}
-                                                    target="_blank"
-                                                    rel="noreferrer"
-                                                    className="text-[9px] font-bold uppercase tracking-widest text-blue-300 hover:text-blue-200"
-                                                >
-                                                    Open
-                                                </a>
-                                            </div>
-                                            <div className="bg-black">
-                                                {capture.type === 'recording' ? (
-                                                    <video src={capture.url} controls className="w-full h-64 object-contain bg-black" />
-                                                ) : (
-                                                    <img src={capture.url} className="w-full h-64 object-contain bg-black" />
-                                                )}
-                                            </div>
-                                            <div className="p-3 text-[9px] text-gray-500 uppercase tracking-widest">
-                                                {capture.name}
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
+                                <FixedSizeList
+                                    height={Math.min(
+                                        Math.max(CAPTURE_MODAL_ITEM_SIZE, captures.length * CAPTURE_MODAL_ITEM_SIZE),
+                                        CAPTURE_MODAL_ITEM_SIZE * CAPTURE_MODAL_MAX_VISIBLE
+                                    )}
+                                    width="100%"
+                                    itemCount={captures.length}
+                                    itemSize={CAPTURE_MODAL_ITEM_SIZE}
+                                    overscanCount={CAPTURE_MODAL_OVERSCAN}
+                                    itemData={captures}
+                                >
+                                    {renderCaptureModalItem}
+                                </FixedSizeList>
                             )}
                         </div>
                     </div>

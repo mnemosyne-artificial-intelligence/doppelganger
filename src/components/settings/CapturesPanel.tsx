@@ -1,10 +1,5 @@
-interface CaptureEntry {
-    name: string;
-    url: string;
-    size: number;
-    modified: number;
-    type: 'screenshot' | 'recording';
-}
+import { FixedSizeList, ListChildComponentProps } from 'react-window';
+import { CaptureEntry } from '../../types';
 
 interface CapturesPanelProps {
     captures: CaptureEntry[];
@@ -13,7 +8,57 @@ interface CapturesPanelProps {
     onDelete: (name: string) => void;
 }
 
+const CAPTURE_ROW_HEIGHT = 72;
+const CAPTURE_ROW_SPACING = 6;
+const CAPTURE_ROW_ITEM_SIZE = CAPTURE_ROW_HEIGHT + CAPTURE_ROW_SPACING;
+const CAPTURE_ROW_MAX_VISIBLE = 5;
+const CAPTURE_ROW_OVERSCAN = 2;
+
+interface CapturesPanelListData {
+    captures: CaptureEntry[];
+    onDelete: (name: string) => void;
+}
+
+const renderCaptureRow = ({ index, style, data }: ListChildComponentProps<CapturesPanelListData>) => {
+    const capture = data.captures[index];
+    if (!capture) return null;
+    return (
+        <div style={{ ...style, paddingBottom: CAPTURE_ROW_SPACING }}>
+            <div className="flex items-center justify-between gap-4 p-4 rounded-2xl border border-white/10 bg-white/[0.02]">
+                <div className="space-y-1">
+                    <div className="text-[10px] font-bold text-white uppercase tracking-widest">
+                        {capture.type === 'recording' ? 'Recording' : 'Screenshot'}
+                    </div>
+                    <div className="text-[9px] text-gray-500 uppercase tracking-widest">{capture.name}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                    <a
+                        href={capture.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="px-3 py-2 rounded-xl border border-white/10 text-[9px] font-bold uppercase tracking-widest text-white hover:bg-white/5 transition-all"
+                        aria-label={`Open ${capture.name}`}
+                    >
+                        Open
+                    </a>
+                    <button
+                        onClick={() => data.onDelete(capture.name)}
+                        className="px-3 py-2 rounded-xl border border-red-500/20 text-[9px] font-bold uppercase tracking-widest text-red-300 hover:bg-red-500/10 transition-all"
+                    >
+                        Delete
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const CapturesPanel: React.FC<CapturesPanelProps> = ({ captures, loading, onRefresh, onDelete }) => {
+    const listHeight = Math.min(
+        Math.max(CAPTURE_ROW_ITEM_SIZE, captures.length * CAPTURE_ROW_ITEM_SIZE),
+        CAPTURE_ROW_ITEM_SIZE * CAPTURE_ROW_MAX_VISIBLE
+    );
+
     return (
         <div className="glass-card p-8 rounded-[40px] space-y-6">
             <div className="flex items-center justify-between">
@@ -36,34 +81,16 @@ const CapturesPanel: React.FC<CapturesPanelProps> = ({ captures, loading, onRefr
                 <div className="text-[9px] text-gray-600 uppercase tracking-widest">No captures found.</div>
             )}
             {!loading && captures.length > 0 && (
-                <div className="space-y-3">
-                    {captures.map((capture) => (
-                        <div key={capture.name} className="flex items-center justify-between gap-4 p-4 rounded-2xl border border-white/10 bg-white/[0.02]">
-                            <div className="space-y-1">
-                                <div className="text-[10px] font-bold text-white uppercase tracking-widest">
-                                    {capture.type === 'recording' ? 'Recording' : 'Screenshot'}
-                                </div>
-                                <div className="text-[9px] text-gray-500 uppercase tracking-widest">{capture.name}</div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <a
-                                    href={capture.url}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="px-3 py-2 rounded-xl border border-white/10 text-[9px] font-bold uppercase tracking-widest text-white hover:bg-white/5 transition-all"
-                                >
-                                    Open
-                                </a>
-                                <button
-                                    onClick={() => onDelete(capture.name)}
-                                    className="px-3 py-2 rounded-xl border border-red-500/20 text-[9px] font-bold uppercase tracking-widest text-red-300 hover:bg-red-500/10 transition-all"
-                                >
-                                    Delete
-                                </button>
-                            </div>
-                        </div>
-                    ))}
-                </div>
+                <FixedSizeList
+                    height={listHeight}
+                    width="100%"
+                    itemCount={captures.length}
+                    itemSize={CAPTURE_ROW_ITEM_SIZE}
+                    overscanCount={CAPTURE_ROW_OVERSCAN}
+                    itemData={{ captures, onDelete }}
+                >
+                    {renderCaptureRow}
+                </FixedSizeList>
             )}
         </div>
     );

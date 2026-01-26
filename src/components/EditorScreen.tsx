@@ -32,6 +32,49 @@ import ActionPalette from './editor/ActionPalette';
 import JsonEditorPane from './editor/JsonEditorPane';
 import ResultsPane from './editor/ResultsPane';
 
+const PRESS_MODIFIERS = [
+    { value: 'Control', label: 'Ctrl' },
+    { value: 'Shift', label: 'Shift' },
+    { value: 'Alt', label: 'Alt' },
+    { value: 'Meta', label: 'Meta' }
+];
+
+const PRESS_BASE_KEYS = [
+    'Enter',
+    'Tab',
+    'Escape',
+    'Space',
+    'Backspace',
+    'Delete',
+    'ArrowUp',
+    'ArrowDown',
+    'ArrowLeft',
+    'ArrowRight',
+    'Home',
+    'End',
+    'PageUp',
+    'PageDown',
+    'F1',
+    'F2',
+    'F3',
+    'F4',
+    'F5'
+]
+    .concat([...Array(10)].map((_, i) => `${i}`))
+    .concat(Array.from({ length: 26 }, (_, i) => String.fromCharCode(65 + i)));
+
+const parsePressKey = (key?: string) => {
+    if (!key) return { modifiers: [] as string[], baseKey: '' };
+    const parts = key.split('+');
+    const baseKey = parts.pop() || '';
+    return { modifiers: parts, baseKey };
+};
+
+const buildPressKey = (modifiers: string[], baseKey: string) => {
+    const filtered = modifiers.filter(Boolean);
+    return [ ...filtered, baseKey ].filter(Boolean).join('+');
+};
+
 interface EditorScreenProps {
     currentTask: Task;
     setCurrentTask: (task: Task) => void;
@@ -889,19 +932,48 @@ const EditorScreen: React.FC<EditorScreenProps> = ({
                                                         </div>
                                                     )}
 
-                                                    {action.type === 'press' && (
-                                                        <div className="space-y-1.5">
-                                                            <label className="text-[7px] font-bold text-gray-600 uppercase tracking-widest pl-1">Key</label>
-                                                            <div className="bg-white/[0.03] border border-white/5 rounded-xl px-3 py-2 text-[11px] focus-within:border-white/20 transition-all">
-                                                                <RichInput
-                                                                    value={action.key || ''}
-                                                                    onChange={(v) => updateAction(action.id, { key: v })}
-                                                                    variables={currentTask.variables}
-                                                                    placeholder="Enter"
-                                                                />
+                                                    {action.type === 'press' && (() => {
+                                                        const { modifiers, baseKey } = parsePressKey(action.key);
+                                                        return (
+                                                            <div className="space-y-2">
+                                                                <label className="text-[7px] font-bold text-gray-600 uppercase tracking-widest pl-1">Key</label>
+                                                                <div className="grid grid-cols-2 gap-1 text-[10px] text-white">
+                                                                    {PRESS_MODIFIERS.map((modifier) => (
+                                                                        <label key={modifier.value} className="inline-flex items-center space-x-1">
+                                                                            <input
+                                                                                type="checkbox"
+                                                                                checked={modifiers.includes(modifier.value)}
+                                                                                onChange={(e) => {
+                                                                                    const nextModifiers = e.target.checked
+                                                                                        ? [...modifiers, modifier.value]
+                                                                                        : modifiers.filter((m) => m !== modifier.value);
+                                                                                    updateAction(action.id, {
+                                                                                        key: buildPressKey(nextModifiers, baseKey)
+                                                                                    });
+                                                                                }}
+                                                                                className="h-3 w-3 rounded border border-white/30 bg-black/80"
+                                                                            />
+                                                                            <span className="uppercase text-[9px] text-white/70">{modifier.label}</span>
+                                                                        </label>
+                                                                    ))}
+                                                                </div>
+                                                                <div className="bg-white/[0.03] border border-white/5 rounded-xl px-3 py-2 text-[11px] focus-within:border-white/20 transition-all">
+                                                                    <select
+                                                                        value={baseKey}
+                                                                        onChange={(e) => updateAction(action.id, { key: buildPressKey(modifiers, e.target.value) })}
+                                                                        className="custom-select w-full bg-transparent border-none px-0 py-0 text-[11px] text-white"
+                                                                    >
+                                                                        <option value="">Select key</option>
+                                                                        {PRESS_BASE_KEYS.map((keyOption) => (
+                                                                            <option key={keyOption} value={keyOption}>
+                                                                                {keyOption}
+                                                                            </option>
+                                                                        ))}
+                                                                    </select>
+                                                                </div>
                                                             </div>
-                                                        </div>
-                                                    )}
+                                                        );
+                                                    })()}
 
                                                     {action.type === 'if' && (() => {
                                                         const varKeys = Object.keys(currentTask.variables || {});

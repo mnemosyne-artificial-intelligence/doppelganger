@@ -8,6 +8,8 @@ import SettingsHeader from './settings/SettingsHeader';
 import LayoutPanel from './settings/LayoutPanel';
 import ProxiesPanel from './settings/ProxiesPanel';
 import UserAgentPanel from './settings/UserAgentPanel';
+import VersionPanel from './settings/VersionPanel';
+import { APP_VERSION } from '@/utils/appInfo';
 
 interface SettingsScreenProps {
     onClearStorage: (type: 'screenshots' | 'cookies') => void;
@@ -502,6 +504,7 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({
                             onChange={setLayoutSplitPercent}
                             onReset={() => setLayoutSplitPercent(30)}
                         />
+                        <VersionPanel version={APP_VERSION} />
                         <StoragePanel onClearStorage={onClearStorage} />
                     </>
                 )}

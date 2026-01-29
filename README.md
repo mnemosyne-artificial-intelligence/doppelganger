@@ -23,7 +23,7 @@
   </a>
 </div>
 
-Doppelganger is a self‑hosted, node‑first automation control plane built for teams that want predictable, auditable browser workflows without pushing sensitive data to third‑party SaaS. It bundles a React/Vite frontend, an Express/Playwright backend, helper scripts, and optional CLI tooling so you can sketch blocks, inject JavaScript, rotate proxies, and run everything locally.
+Doppelganger is a self‑hosted, block-first automation control plane built for teams that want predictable, auditable browser workflows without pushing sensitive data to third‑party SaaS. It bundles a React/Vite frontend, an Express/Playwright backend, helper scripts, and optional CLI tooling so you can sketch blocks, inject JavaScript, rotate proxies, and run everything locally.
 
 ![Demo run](demo-run.gif)
 
@@ -65,6 +65,7 @@ docker pull mnemosyneai/doppelganger
 docker run -d \
   --name doppelganger \
   -p 11345:11345 \
+  -p 54311:54311 \
   -e SESSION_SECRET=replace_with_long_random_value \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/public:/app/public \
@@ -136,6 +137,7 @@ Proxy rotation also respects `data/proxies.json` (see below), and `data/allowed_
 - `NODE_ENV=production` enables the bundled `dist/` client and reduces console verbosity.
 - `HOST=0.0.0.0` allows binding beyond localhost inside Docker containers, while `PORT` overrides the Express listen port (defaults to `11345`).
 - Set `LOG_LEVEL` to `debug` if you need more Playwright or proxy diagnostics; this can also be a custom wrapper when running `node server.js`.
+- **Headful mode:** the headful/visible browser binds to `54311`, so open that port alongside `11345` when running `headful.js` or other headful flows.
 
 # UI Walkthrough
 

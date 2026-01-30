@@ -448,6 +448,7 @@ app.post('/api/auth/setup', authRateLimiter, async (req, res) => {
     res.json({ success: true });
 });
 
+// Login reads credentials from the POST body only, so passwords never appear in URLs even though CodeQL flags the endpoint.
 app.post('/api/auth/login', authRateLimiter, async (req, res) => {
     const { email, password } = req.body;
     const normalizedEmail = String(email || '').trim().toLowerCase();

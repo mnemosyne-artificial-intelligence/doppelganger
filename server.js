@@ -38,6 +38,11 @@ if (TRUST_PROXY) {
     app.set('trust proxy', true);
 }
 
+// Enable secure session cookies when running over HTTPS (defaults to production); override with SESSION_COOKIE_SECURE env.
+const SESSION_COOKIE_SECURE = process.env.SESSION_COOKIE_SECURE
+    ? ['1', 'true', 'yes'].includes(String(process.env.SESSION_COOKIE_SECURE).toLowerCase())
+    : process.env.NODE_ENV === 'production';
+
 // Ensure data directory exists
 if (!fs.existsSync(path.join(__dirname, 'data'))) {
     fs.mkdirSync(path.join(__dirname, 'data'));
@@ -358,7 +363,8 @@ app.use(session({
     resave: false,
     saveUninitialized: false,
     cookie: {
-        secure: false,
+        // CodeQL warns about insecure cookies; we only set secure=true when NODE_ENV=production or SESSION_COOKIE_SECURE explicitly enables it.
+        secure: SESSION_COOKIE_SECURE,
         maxAge: SESSION_TTL_SECONDS * 1000
     }
 }));

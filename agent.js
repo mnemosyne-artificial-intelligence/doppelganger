@@ -195,8 +195,9 @@ async function handleAgent(req, res) {
     }
 
     const localPort = req.socket && req.socket.localPort;
-    const localHost = localPort ? `127.0.0.1:${localPort}` : req.get('host');
-    const baseUrl = `${req.protocol || 'http'}://${localHost}`;
+    const configuredPort = process.env.PORT || process.env.VITE_BACKEND_PORT;
+    const basePort = localPort || configuredPort || '11345';
+    const baseUrl = `${req.protocol || 'http'}://127.0.0.1:${basePort}`;
     const runtimeVars = { ...(data.taskVariables || data.variables || {}) };
     let lastBlockOutput = null;
     runtimeVars['block.output'] = lastBlockOutput;

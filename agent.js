@@ -1350,6 +1350,8 @@ async function handleAgent(req, res) {
                     return { shadowQueryAll, shadowText };
                 })();
 
+                // CodeQL alerts on dynamic eval, but extraction scripts intentionally run inside the browser sandbox,
+                // so we expose only the helpers needed (window, document, DOMParser, console) and keep the evaluation confined there.
                 const executor = new Function(
                     '$$data',
                     'window',

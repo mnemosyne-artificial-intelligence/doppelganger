@@ -4,9 +4,10 @@ interface AuthScreenProps {
     status: 'login' | 'setup';
     onSubmit: (email: string, pass: string, name?: string, passConfirm?: string) => Promise<void>;
     error: string;
+    busy?: boolean;
 }
 
-const AuthScreen: React.FC<AuthScreenProps> = ({ status, onSubmit, error }) => {
+const AuthScreen: React.FC<AuthScreenProps> = ({ status, onSubmit, error, busy = false }) => {
     const [name, setName] = useState('');
     const [email, setEmail] = useState('');
     const [pass, setPass] = useState('');
@@ -15,6 +16,10 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ status, onSubmit, error }) => {
     const handleSubmit = () => {
         onSubmit(email, pass, name, passConfirm);
     };
+
+    const buttonLabel = status === 'setup'
+        ? (busy ? 'Creating account...' : 'Create Account')
+        : (busy ? 'Authenticating...' : 'Authenticate');
 
     return (
         <div className="fixed inset-0 z-[100] bg-[#020202] flex items-center justify-center">
@@ -77,9 +82,10 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ status, onSubmit, error }) => {
 
                 <button
                     onClick={handleSubmit}
-                    className="shine-effect w-full bg-white text-black py-4 rounded-2xl font-bold text-[10px] tracking-[0.3em] uppercase hover:scale-[1.02] active:scale-[0.98] transition-all"
+                    disabled={busy}
+                    className="shine-effect w-full bg-white text-black py-4 rounded-2xl font-bold text-[10px] tracking-[0.3em] uppercase hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-60 disabled:cursor-default"
                 >
-                    {status === 'setup' ? 'Create Account' : 'Authenticate'}
+                    {buttonLabel}
                 </button>
 
                 {error && (

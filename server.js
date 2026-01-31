@@ -69,6 +69,13 @@ function saveUsers(users) {
     fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
 }
 
+const saveSession = (req) => new Promise((resolve, reject) => {
+    if (!req.session) {
+        return resolve();
+    }
+    req.session.save((err) => err ? reject(err) : resolve());
+});
+
 const TASKS_FILE = path.join(__dirname, 'data', 'tasks.json');
 const API_KEY_FILE = path.join(__dirname, 'data', 'api_key.json');
 const STORAGE_STATE_PATH = path.join(__dirname, 'storage_state.json');
@@ -451,6 +458,12 @@ app.post('/api/auth/setup', authRateLimiter, async (req, res) => {
     const newUser = { id: Date.now(), name, email: normalizedEmail, password: hashedPassword };
     saveUsers([newUser]);
     req.session.user = { id: newUser.id, name: newUser.name, email: newUser.email };
+    try {
+        await saveSession(req);
+    } catch (err) {
+        console.error('[AUTH] Setup session save failed:', err);
+        return res.status(500).json({ error: 'SESSION_SAVE_FAILED' });
+    }
     res.json({ success: true });
 });
 
@@ -462,6 +475,12 @@ app.post('/api/auth/login', authRateLimiter, async (req, res) => {
     const user = users.find(u => String(u.email || '').toLowerCase() === normalizedEmail);
     if (user && await bcrypt.compare(password, user.password)) {
         req.session.user = { id: user.id, name: user.name, email: user.email };
+        try {
+            await saveSession(req);
+        } catch (err) {
+            console.error('[AUTH] Login session save failed:', err);
+            return res.status(500).json({ error: 'SESSION_SAVE_FAILED' });
+        }
         res.json({ success: true });
     } else {
         res.status(401).json({ error: 'INVALID' });

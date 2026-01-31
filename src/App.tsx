@@ -32,6 +32,7 @@ export default function App() {
 
     // Auth Screen State
     const [authError, setAuthError] = useState('');
+    const [authBusy, setAuthBusy] = useState(false);
 
     // Dashboard State
     const [tasks, setTasks] = useState<Task[]>([]);
@@ -209,55 +210,88 @@ export default function App() {
 
     const checkAuth = async () => {
         try {
-            const res = await fetch('/api/auth/me');
+            const res = await fetch('/api/auth/me', { credentials: 'include' });
             const data = await res.json();
             if (data.authenticated) {
                 setUser(data.user);
                 setAuthStatus('authenticated');
                 loadTasks();
-            } else {
-                const sRes = await fetch('/api/auth/check-setup');
-                const sData = await sRes.json();
-                setAuthStatus(sData.setupRequired ? 'setup' : 'login');
+                return true;
             }
+            const sRes = await fetch('/api/auth/check-setup', { credentials: 'include' });
+            const sData = await sRes.json();
+            setAuthStatus(sData.setupRequired ? 'setup' : 'login');
         } catch (e) {
             setAuthStatus('login');
+        }
+        return false;
+    };
+
+    const formatAuthError = (errorCode: unknown, fallback: string) => {
+        if (typeof errorCode !== 'string' || !errorCode) return fallback;
+        switch (errorCode) {
+            case 'ALREADY_SETUP':
+                return 'An account already exists';
+            case 'INVALID':
+                return 'Invalid credentials';
+            case 'SESSION_SAVE_FAILED':
+                return 'Unable to persist your session';
+            default: {
+                const normalized = errorCode.toLowerCase().replace(/_/g, ' ');
+                return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+            }
         }
     };
 
     const handleAuthSubmit = async (email: string, pass: string, name?: string, passConfirm?: string) => {
-        if (!email || !pass) return;
+        if (!email || !pass) {
+            setAuthError('Email and password are required');
+            return;
+        }
         if (authStatus === 'setup' && (!name || pass !== passConfirm)) {
             setAuthError(name ? "Passwords do not match" : "Name required");
             return;
         }
+        if (authBusy) return;
 
         const endpoint = authStatus === 'setup' ? '/api/auth/setup' : '/api/auth/login';
         const payload = authStatus === 'setup'
             ? { name, email, password: pass }
             : { email, password: pass };
 
+        setAuthBusy(true);
         try {
             const res = await fetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
                 body: JSON.stringify(payload)
             });
+            const data = await res.json().catch(() => ({}));
             if (res.ok) {
                 setAuthError('');
-                await checkAuth();
-                navigate('/');
+                setAuthStatus('checking');
+                const authenticated = await checkAuth();
+                if (authenticated) {
+                    navigate('/');
+                } else {
+                    setAuthError('Authentication failed');
+                    setAuthStatus('login');
+                }
             } else {
-                setAuthError(authStatus === 'setup' ? "Setup failed" : "Invalid credentials");
+                const fallback = authStatus === 'setup' ? 'Setup failed' : 'Invalid credentials';
+                setAuthError(formatAuthError((data as any)?.error, fallback));
             }
         } catch (e) {
             setAuthError("Network error");
+        } finally {
+            setAuthBusy(false);
         }
     };
 
     const loadTasks = async () => {
         try {
-            const res = await fetch('/api/tasks');
+        const res = await fetch('/api/tasks', { credentials: 'include' });
             const data = await res.json();
             const sorted = [...data].sort((a: Task, b: Task) => (b.last_opened || 0) - (a.last_opened || 0));
             setTasks(sorted);
@@ -271,7 +305,7 @@ export default function App() {
     const logout = async () => {
         const confirmed = await requestConfirm('Are you sure you want to log out?');
         if (!confirmed) return;
-        await fetch('/api/auth/logout', { method: 'POST' });
+        await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
         setUser(null);
         setAuthStatus('login');
         navigate('/');
@@ -685,7 +719,7 @@ export default function App() {
 
     let content: React.ReactNode;
     if (authStatus === 'login' || authStatus === 'setup') {
-        content = <AuthScreen status={authStatus} onSubmit={handleAuthSubmit} error={authError} />;
+        content = <AuthScreen status={authStatus} onSubmit={handleAuthSubmit} error={authError} busy={authBusy} />;
     } else if (authStatus === 'checking') {
         content = <LoadingScreen title="Authenticating" subtitle="Verifying session state" />;
     } else {

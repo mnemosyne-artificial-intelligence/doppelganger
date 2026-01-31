@@ -38,10 +38,11 @@ if (TRUST_PROXY) {
     app.set('trust proxy', true);
 }
 
-// Enable secure session cookies when running over HTTPS (defaults to production); override with SESSION_COOKIE_SECURE env.
-const SESSION_COOKIE_SECURE = process.env.SESSION_COOKIE_SECURE
-    ? ['1', 'true', 'yes'].includes(String(process.env.SESSION_COOKIE_SECURE).toLowerCase())
-    : process.env.NODE_ENV === 'production';
+// Enable secure session cookies when you opt in; defaults to false so HTTP hosts still get cookies.
+const SESSION_COOKIE_SECURE = ['1', 'true', 'yes'].includes(String(process.env.SESSION_COOKIE_SECURE || '').toLowerCase());
+if (!SESSION_COOKIE_SECURE && process.env.NODE_ENV === 'production') {
+    console.warn('[SECURITY] SESSION_COOKIE_SECURE is not enabled, so cookies are issued over HTTP. Set SESSION_COOKIE_SECURE=1 when you run behind HTTPS.');
+}
 
 // Ensure data directory exists
 if (!fs.existsSync(path.join(__dirname, 'data'))) {

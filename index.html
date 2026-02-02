@@ -48,28 +48,16 @@
                 });
             };
 
-            const cancelTimer = () => {
-                if (timerId) {
-                    clearTimeout(timerId);
-                    timerId = undefined;
-                }
-            };
-
             const startEditorTimer = () => {
                 if (hasOpened || timerId) return;
                 timerId = window.setTimeout(openPopup, editorDelay);
             };
 
             const onLocationChange = () => {
-                if (hasOpened) {
-                    cancelTimer();
-                    return;
-                }
+                if (hasOpened) return;
                 const path = window.location.pathname || '';
                 if (path.startsWith('/tasks')) {
                     startEditorTimer();
-                } else {
-                    cancelTimer();
                 }
             };
 

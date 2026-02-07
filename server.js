@@ -392,6 +392,37 @@ app.use(session({
     }
 }));
 
+const requireCsrfProtection = (req, res, next) => {
+    if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+        return next();
+    }
+
+    const origin = req.headers.origin;
+    const referer = req.headers.referer;
+    const host = req.headers.host;
+
+    if (origin) {
+        const originHost = origin.replace(/^https?:\/\//, '');
+        if (originHost !== host) {
+            return res.status(403).json({ error: 'CSRF_ORIGIN_MISMATCH' });
+        }
+    } else if (referer) {
+        try {
+            const refererUrl = new URL(referer);
+            if (refererUrl.host !== host) {
+                return res.status(403).json({ error: 'CSRF_REFERER_MISMATCH' });
+            }
+        } catch {
+            return res.status(403).json({ error: 'CSRF_INVALID_REFERER' });
+        }
+    }
+    // If neither Origin nor Referer is present, we allow the request to support non-browser clients (e.g., scripts)
+    // that might not send these headers. Browsers generally send at least one of them.
+    next();
+};
+
+app.use(requireCsrfProtection);
+
 // Auth Middleware
 const requireAuth = (req, res, next) => {
     if (process.env.NODE_ENV !== 'production') {

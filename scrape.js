@@ -2,6 +2,7 @@ const { chromium } = require('playwright');
 const { JSDOM } = require('jsdom');
 const fs = require('fs');
 const path = require('path');
+const vm = require('vm');
 const { getProxySelection } = require('./proxy-rotation');
 const { selectUserAgent } = require('./user-agent-settings');
 
@@ -72,6 +73,98 @@ const parseBooleanFlag = (value) => {
     if (value === undefined || value === null) return false;
     const normalized = String(value).toLowerCase();
     return normalized === 'true' || normalized === '1';
+};
+
+// Safe Proxy Implementation for Sandbox
+const proxyMap = new WeakMap();
+const targetMap = new WeakMap();
+
+const unwrap = (obj) => {
+    return proxyMap.get(obj) || obj;
+};
+
+const createSafeProxy = (target) => {
+    if (target === null || (typeof target !== 'object' && typeof target !== 'function')) {
+        return target;
+    }
+    if (targetMap.has(target)) {
+        return targetMap.get(target);
+    }
+
+    const proxy = new Proxy(target, {
+        get: (obj, prop) => {
+            if (prop === 'constructor' || prop === '__proto__') {
+                return undefined;
+            }
+            const value = obj[prop];
+            return createSafeProxy(value);
+        },
+        apply: (target, thisArg, args) => {
+            const unproxiedArgs = args.map(arg => {
+                const raw = unwrap(arg);
+                if (typeof raw === 'function') {
+                    return function (...cbArgs) {
+                        const proxiedCbArgs = cbArgs.map(cbArg => createSafeProxy(cbArg));
+                        const proxiedThis = createSafeProxy(this);
+                        return raw.apply(proxiedThis, proxiedCbArgs);
+                    };
+                }
+                return raw;
+            });
+            const result = target.apply(unwrap(thisArg), unproxiedArgs);
+            return createSafeProxy(result);
+        },
+        construct: (target, args) => {
+            const unproxiedArgs = args.map(arg => {
+                const raw = unwrap(arg);
+                if (typeof raw === 'function') {
+                    return function (...cbArgs) {
+                        const proxiedCbArgs = cbArgs.map(cbArg => createSafeProxy(cbArg));
+                        const proxiedThis = createSafeProxy(this);
+                        return raw.apply(proxiedThis, proxiedCbArgs);
+                    };
+                }
+                return raw;
+            });
+            const result = new target(...unproxiedArgs);
+            return createSafeProxy(result);
+        },
+        has: (target, prop) => {
+            if (prop === 'constructor' || prop === '__proto__') return false;
+            return prop in target;
+        },
+        getOwnPropertyDescriptor: (target, prop) => {
+            if (prop === 'constructor' || prop === '__proto__') {
+                return undefined;
+            }
+            const descriptor = Object.getOwnPropertyDescriptor(target, prop);
+            if (!descriptor) return undefined;
+
+            if (descriptor.configurable === false && 'value' in descriptor && typeof descriptor.value === 'object') {
+                 // Cannot wrap value of non-configurable property due to Proxy invariant.
+                 // We must return the original descriptor or risk breakage/invariant error.
+                 return descriptor;
+            }
+
+            if (descriptor.value) {
+                descriptor.value = createSafeProxy(descriptor.value);
+            }
+            if (descriptor.get) {
+                descriptor.get = createSafeProxy(descriptor.get);
+            }
+            if (descriptor.set) {
+                descriptor.set = createSafeProxy(descriptor.set);
+            }
+            return descriptor;
+        },
+        getPrototypeOf: (target) => {
+            return createSafeProxy(Object.getPrototypeOf(target));
+        }
+    });
+
+    targetMap.set(target, proxy);
+    proxyMap.set(proxy, target);
+    return proxy;
 };
 
 async function handleScrape(req, res) {
@@ -402,23 +495,35 @@ async function handleScrape(req, res) {
                     return { shadowQueryAll, shadowText };
                 })();
 
-                const executor = new Function(
-                    '$$data',
-                    'window',
-                    'document',
-                    'DOMParser',
-                    'console',
-                    `"use strict"; return (async () => { ${script}\n})();`
-                );
-                const $$data = {
-                    html: () => html || '',
-                    url: () => pageUrl || '',
-                    window,
-                    document: window.document,
-                    shadowQueryAll: includeShadowDom ? shadowHelpers.shadowQueryAll : undefined,
-                    shadowText: includeShadowDom ? shadowHelpers.shadowText : undefined
-                };
-                const result = await executor($$data, window, window.document, window.DOMParser, consoleProxy);
+                // Security: Run script in isolated VM context with proxied globals to prevent RCE
+                const sandbox = Object.create(null); // Use null prototype to prevent access to Host Object constructor
+                Object.assign(sandbox, {
+                    $$data: createSafeProxy({
+                        html: () => html || '',
+                        url: () => pageUrl || '',
+                        window,
+                        document: window.document,
+                        shadowQueryAll: includeShadowDom ? shadowHelpers.shadowQueryAll : undefined,
+                        shadowText: includeShadowDom ? shadowHelpers.shadowText : undefined
+                    }),
+                    window: createSafeProxy(window),
+                    document: createSafeProxy(window.document),
+                    DOMParser: createSafeProxy(window.DOMParser),
+                    console: createSafeProxy(consoleProxy)
+                });
+
+                const context = vm.createContext(sandbox);
+
+                // Wrap script in async IIFE
+                const code = `"use strict"; (async () => { ${script}\n})();`;
+
+                // Execute in VM
+                const result = await vm.runInContext(code, context);
+
+                // If result is proxied, unwrap it (though unwrap works on proxies created by createSafeProxy,
+                // but the result comes from VM, which might be a primitive or a proxy of a Host object.
+                // If it's a new object created in VM, it is NOT proxied by createSafeProxy (unless we proxied the VM global Object?).
+                // But VM objects are safe to return to Host (they are just objects).
                 return { result, logs: logBuffer };
             } catch (e) {
                 return { result: `Extraction script error: ${e.message}`, logs: [] };

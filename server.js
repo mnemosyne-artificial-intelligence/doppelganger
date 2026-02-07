@@ -155,26 +155,38 @@ function appendTaskVersion(task) {
     }
 }
 
-function loadExecutions() {
-    if (!fs.existsSync(EXECUTIONS_FILE)) return [];
+let executionLock = Promise.resolve();
+
+const runWithExecutionLock = (fn) => {
+    const currentLock = executionLock;
+    let release;
+    const nextLock = new Promise(resolve => { release = resolve; });
+    executionLock = nextLock;
+    return currentLock.then(() => fn().finally(release));
+};
+
+async function loadExecutions() {
     try {
-        return JSON.parse(fs.readFileSync(EXECUTIONS_FILE, 'utf8'));
+        const data = await fs.promises.readFile(EXECUTIONS_FILE, 'utf8');
+        return JSON.parse(data);
     } catch (e) {
         return [];
     }
 }
 
-function saveExecutions(executions) {
-    fs.writeFileSync(EXECUTIONS_FILE, JSON.stringify(executions, null, 2));
+async function saveExecutions(executions) {
+    await fs.promises.writeFile(EXECUTIONS_FILE, JSON.stringify(executions, null, 2));
 }
 
-function appendExecution(entry) {
-    const executions = loadExecutions();
-    executions.unshift(entry);
-    if (executions.length > MAX_EXECUTIONS) {
-        executions.length = MAX_EXECUTIONS;
-    }
-    saveExecutions(executions);
+async function appendExecution(entry) {
+    await runWithExecutionLock(async () => {
+        const executions = await loadExecutions();
+        executions.unshift(entry);
+        if (executions.length > MAX_EXECUTIONS) {
+            executions.length = MAX_EXECUTIONS;
+        }
+        await saveExecutions(executions);
+    });
 }
 
 function registerExecution(req, res, baseMeta = {}) {
@@ -204,7 +216,9 @@ function registerExecution(req, res, baseMeta = {}) {
             taskSnapshot: body.taskSnapshot || null,
             result: res.locals.executionResult || null
         };
-        appendExecution(entry);
+        appendExecution(entry).catch(err => {
+            console.error('Failed to save execution:', err);
+        });
     });
 }
 
@@ -373,9 +387,41 @@ app.use(session({
     cookie: {
         // CodeQL warns about insecure cookies; we only set secure=true when NODE_ENV=production or SESSION_COOKIE_SECURE explicitly enables it.
         secure: SESSION_COOKIE_SECURE,
+        sameSite: 'strict', // Mitigate CSRF
         maxAge: SESSION_TTL_SECONDS * 1000
     }
 }));
+
+const requireCsrfProtection = (req, res, next) => {
+    if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+        return next();
+    }
+
+    const origin = req.headers.origin;
+    const referer = req.headers.referer;
+    const host = req.headers.host;
+
+    if (origin) {
+        const originHost = origin.replace(/^https?:\/\//, '');
+        if (originHost !== host) {
+            return res.status(403).json({ error: 'CSRF_ORIGIN_MISMATCH' });
+        }
+    } else if (referer) {
+        try {
+            const refererUrl = new URL(referer);
+            if (refererUrl.host !== host) {
+                return res.status(403).json({ error: 'CSRF_REFERER_MISMATCH' });
+            }
+        } catch {
+            return res.status(403).json({ error: 'CSRF_INVALID_REFERER' });
+        }
+    }
+    // If neither Origin nor Referer is present, we allow the request to support non-browser clients (e.g., scripts)
+    // that might not send these headers. Browsers generally send at least one of them.
+    next();
+};
+
+app.use(requireCsrfProtection);
 
 // Auth Middleware
 const requireAuth = (req, res, next) => {
@@ -709,8 +755,8 @@ app.delete('/api/tasks/:id', requireAuth, (req, res) => {
     res.json({ success: true });
 });
 
-app.get('/api/executions', requireAuth, (req, res) => {
-    const executions = loadExecutions();
+app.get('/api/executions', requireAuth, async (req, res) => {
+    const executions = await runWithExecutionLock(() => loadExecutions());
     res.json({ executions });
 });
 app.get('/api/executions/stream', requireAuth, (req, res) => {
@@ -743,15 +789,17 @@ app.get('/api/executions/stream', requireAuth, (req, res) => {
         if (clients.size === 0) executionStreams.delete(runId);
     });
 });
-app.get('/api/executions/:id', requireAuth, (req, res) => {
-    const executions = loadExecutions();
+app.get('/api/executions/:id', requireAuth, async (req, res) => {
+    const executions = await runWithExecutionLock(() => loadExecutions());
     const exec = executions.find(e => e.id === req.params.id);
     if (!exec) return res.status(404).json({ error: 'EXECUTION_NOT_FOUND' });
     res.json({ execution: exec });
 });
 
-app.post('/api/executions/clear', requireAuth, (req, res) => {
-    saveExecutions([]);
+app.post('/api/executions/clear', requireAuth, async (req, res) => {
+    await runWithExecutionLock(async () => {
+        await saveExecutions([]);
+    });
     res.json({ success: true });
     try {
         if (runId) sendExecutionUpdate(runId, { status: 'stop_requested' });
@@ -767,10 +815,13 @@ app.post('/api/executions/stop', requireAuth, (req, res) => {
     res.json({ success: true });
 });
 
-app.delete('/api/executions/:id', requireAuth, (req, res) => {
+app.delete('/api/executions/:id', requireAuth, async (req, res) => {
     const id = req.params.id;
-    const executions = loadExecutions().filter(e => e.id !== id);
-    saveExecutions(executions);
+    await runWithExecutionLock(async () => {
+        const executions = await loadExecutions();
+        const filtered = executions.filter(e => e.id !== id);
+        await saveExecutions(filtered);
+    });
     res.json({ success: true });
 });
 

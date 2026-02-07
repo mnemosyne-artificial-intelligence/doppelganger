@@ -5,6 +5,7 @@ const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { loadApiKey, saveApiKey, generateApiKey } = require('./utils/auth');
 const net = require('net');
 const rateLimit = require('express-rate-limit');
 const app = express();
@@ -78,7 +79,6 @@ const saveSession = (req) => new Promise((resolve, reject) => {
 });
 
 const TASKS_FILE = path.join(__dirname, 'data', 'tasks.json');
-const API_KEY_FILE = path.join(__dirname, 'data', 'api_key.json');
 const STORAGE_STATE_PATH = path.join(__dirname, 'storage_state.json');
 const STORAGE_STATE_FILE = (() => {
     try {
@@ -208,52 +208,6 @@ function registerExecution(req, res, baseMeta = {}) {
     });
 }
 
-// Helper to load API key
-function loadApiKey() {
-    let apiKey = null;
-    if (fs.existsSync(API_KEY_FILE)) {
-        try {
-            const data = JSON.parse(fs.readFileSync(API_KEY_FILE, 'utf8'));
-            apiKey = data && data.apiKey ? data.apiKey : null;
-        } catch (e) {
-            apiKey = null;
-        }
-    }
-
-    if (!apiKey && fs.existsSync(USERS_FILE)) {
-        try {
-            const users = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
-            if (Array.isArray(users) && users.length > 0 && users[0].apiKey) {
-                apiKey = users[0].apiKey;
-                saveApiKey(apiKey);
-            }
-        } catch (e) {
-            // ignore
-        }
-    }
-
-    return apiKey;
-}
-
-// Helper to save API key
-function saveApiKey(apiKey) {
-    fs.writeFileSync(API_KEY_FILE, JSON.stringify({ apiKey }, null, 2));
-    if (fs.existsSync(USERS_FILE)) {
-        try {
-            const users = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
-            if (Array.isArray(users) && users.length > 0) {
-                users[0].apiKey = apiKey;
-                fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
-            }
-        } catch (e) {
-            // ignore
-        }
-    }
-}
-
-function generateApiKey() {
-    return crypto.randomBytes(32).toString('hex');
-}
 
 let allowedIpsCache = { env: null, file: null, mtimeMs: 0, set: null };
 

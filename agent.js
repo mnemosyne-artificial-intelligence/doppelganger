@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { getProxySelection } = require('./proxy-rotation');
 const { selectUserAgent } = require('./user-agent-settings');
+const { loadApiKey } = require('./utils/auth');
 
 const STORAGE_STATE_PATH = path.join(__dirname, 'storage_state.json');
 const STORAGE_STATE_FILE = (() => {
@@ -17,18 +18,6 @@ const STORAGE_STATE_FILE = (() => {
     } catch {}
     return STORAGE_STATE_PATH;
 })();
-
-const API_KEY_FILE = path.join(__dirname, 'data', 'api_key.json');
-
-const loadApiKey = () => {
-    if (!fs.existsSync(API_KEY_FILE)) return null;
-    try {
-        const data = JSON.parse(fs.readFileSync(API_KEY_FILE, 'utf8'));
-        return data && data.apiKey ? data.apiKey : null;
-    } catch {
-        return null;
-    }
-};
 
 let progressReporter = null;
 let stopChecker = null;

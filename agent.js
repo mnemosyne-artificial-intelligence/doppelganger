@@ -1458,11 +1458,11 @@ async function handleAgent(req, res) {
                     const recordingName = `${captureRunId}_agent_${Date.now()}.webm`;
                     const recordingPath = path.join(capturesDir, recordingName);
                     try {
-                        fs.renameSync(videoPath, recordingPath);
+                        await fs.promises.rename(videoPath, recordingPath);
                     } catch (err) {
                         if (err && err.code === 'EXDEV') {
-                            fs.copyFileSync(videoPath, recordingPath);
-                            fs.unlinkSync(videoPath);
+                            await fs.promises.copyFile(videoPath, recordingPath);
+                            await fs.promises.unlink(videoPath);
                         } else {
                             throw err;
                         }

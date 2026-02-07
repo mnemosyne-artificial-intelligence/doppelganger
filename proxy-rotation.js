@@ -62,8 +62,8 @@ const normalizeServer = (raw) => {
 };
 
 const createProxyId = (seed) => {
-    // SHA-1 is used purely for deterministic, non-secret IDs so CodeQL’s weak-crypto warning is a false positive.
-    const hash = crypto.createHash('sha1').update(String(seed)).digest('hex').slice(0, 12);
+    // SHA-256 is used purely for deterministic, non-secret IDs.
+    const hash = crypto.createHash('sha256').update(String(seed)).digest('hex').slice(0, 12);
     return `proxy_${hash}`;
 };
 

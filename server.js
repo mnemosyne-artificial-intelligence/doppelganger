@@ -106,6 +106,14 @@ const authRateLimiter = rateLimit({
     legacyHeaders: false
 });
 
+const SETTINGS_RATE_LIMIT_MAX = Number(process.env.SETTINGS_RATE_LIMIT_MAX || 100);
+const settingsRateLimiter = rateLimit({
+    windowMs: REQUEST_LIMIT_WINDOW_MS,
+    max: SETTINGS_RATE_LIMIT_MAX,
+    standardHeaders: true,
+    legacyHeaders: false
+});
+
 const sendExecutionUpdate = (runId, payload) => {
     if (!runId) return;
     const clients = executionStreams.get(runId);
@@ -373,6 +381,7 @@ app.use(session({
     cookie: {
         // CodeQL warns about insecure cookies; we only set secure=true when NODE_ENV=production or SESSION_COOKIE_SECURE explicitly enables it.
         secure: SESSION_COOKIE_SECURE,
+        sameSite: 'lax',
         maxAge: SESSION_TTL_SECONDS * 1000
     }
 }));
@@ -543,7 +552,7 @@ app.post('/api/settings/user-agent', requireAuthForSettings, (req, res) => {
 });
 
 // --- PROXY SETTINGS ---
-app.get('/api/settings/proxies', requireAuthForSettings, async (_req, res) => {
+app.get('/api/settings/proxies', requireAuthForSettings, settingsRateLimiter, async (_req, res) => {
     try {
         res.json(await listProxies());
     } catch (e) {
@@ -552,7 +561,7 @@ app.get('/api/settings/proxies', requireAuthForSettings, async (_req, res) => {
     }
 });
 
-app.post('/api/settings/proxies', requireAuthForSettings, async (req, res) => {
+app.post('/api/settings/proxies', requireAuthForSettings, settingsRateLimiter, async (req, res) => {
     const { server, username, password, label } = req.body || {};
     if (!server || typeof server !== 'string') {
         return res.status(400).json({ error: 'MISSING_SERVER' });
@@ -567,7 +576,7 @@ app.post('/api/settings/proxies', requireAuthForSettings, async (req, res) => {
     }
 });
 
-app.post('/api/settings/proxies/import', requireAuthForSettings, async (req, res) => {
+app.post('/api/settings/proxies/import', requireAuthForSettings, settingsRateLimiter, async (req, res) => {
     const entries = req.body && Array.isArray(req.body.proxies) ? req.body.proxies : [];
     if (entries.length === 0) {
         return res.status(400).json({ error: 'MISSING_PROXIES' });
@@ -582,7 +591,7 @@ app.post('/api/settings/proxies/import', requireAuthForSettings, async (req, res
     }
 });
 
-app.put('/api/settings/proxies/:id', requireAuthForSettings, async (req, res) => {
+app.put('/api/settings/proxies/:id', requireAuthForSettings, settingsRateLimiter, async (req, res) => {
     const id = String(req.params.id || '').trim();
     if (!id || id === 'host') return res.status(400).json({ error: 'INVALID_ID' });
     const { server, username, password, label } = req.body || {};
@@ -599,7 +608,7 @@ app.put('/api/settings/proxies/:id', requireAuthForSettings, async (req, res) =>
     }
 });
 
-app.delete('/api/settings/proxies/:id', requireAuthForSettings, async (req, res) => {
+app.delete('/api/settings/proxies/:id', requireAuthForSettings, settingsRateLimiter, async (req, res) => {
     const id = String(req.params.id || '').trim();
     if (!id) return res.status(400).json({ error: 'MISSING_ID' });
     try {
@@ -612,7 +621,7 @@ app.delete('/api/settings/proxies/:id', requireAuthForSettings, async (req, res)
     }
 });
 
-app.post('/api/settings/proxies/default', requireAuthForSettings, async (req, res) => {
+app.post('/api/settings/proxies/default', requireAuthForSettings, settingsRateLimiter, async (req, res) => {
     const id = req.body && req.body.id ? String(req.body.id) : '';
     try {
         const result = await setDefaultProxy(id || null);
@@ -624,7 +633,7 @@ app.post('/api/settings/proxies/default', requireAuthForSettings, async (req, re
     }
 });
 
-app.post('/api/settings/proxies/rotation', requireAuthForSettings, async (req, res) => {
+app.post('/api/settings/proxies/rotation', requireAuthForSettings, settingsRateLimiter, async (req, res) => {
     const body = req.body || {};
     const hasIncludeDefault = Object.prototype.hasOwnProperty.call(body, 'includeDefaultInRotation');
     const includeDefaultInRotation = !!body.includeDefaultInRotation;

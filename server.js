@@ -106,6 +106,14 @@ const authRateLimiter = rateLimit({
     legacyHeaders: false
 });
 
+const SETTINGS_RATE_LIMIT_MAX = Number(process.env.SETTINGS_RATE_LIMIT_MAX || 100);
+const settingsRateLimiter = rateLimit({
+    windowMs: REQUEST_LIMIT_WINDOW_MS,
+    max: SETTINGS_RATE_LIMIT_MAX,
+    standardHeaders: true,
+    legacyHeaders: false
+});
+
 const sendExecutionUpdate = (runId, payload) => {
     if (!runId) return;
     const clients = executionStreams.get(runId);
@@ -373,6 +381,7 @@ app.use(session({
     cookie: {
         // CodeQL warns about insecure cookies; we only set secure=true when NODE_ENV=production or SESSION_COOKIE_SECURE explicitly enables it.
         secure: SESSION_COOKIE_SECURE,
+        sameSite: 'lax',
         maxAge: SESSION_TTL_SECONDS * 1000
     }
 }));
@@ -383,7 +392,8 @@ const requireAuth = (req, res, next) => {
         console.log(`[AUTH] Path: ${req.path}, Session: ${req.session.user ? 'YES' : 'NO'}`);
     }
     if (req.session.user) {
-        next();
+        // Enforce CSRF check for all authenticated sessions
+        checkCsrf(req, res, next);
     } else {
         if (req.xhr || req.path.startsWith('/api/')) {
             res.status(401).json({ error: 'UNAUTHORIZED' });
@@ -393,9 +403,60 @@ const requireAuth = (req, res, next) => {
     }
 };
 
+// CSRF Protection Middleware
+const checkCsrf = (req, res, next) => {
+    // Skip for GET/HEAD/OPTIONS
+    if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+
+    // Skip if not authenticated session
+    if (!req.session || !req.session.user) return next();
+
+    // Check Origin or Referer matches Host
+    const origin = req.headers.origin;
+    const referer = req.headers.referer;
+    const host = req.headers.host;
+
+    let valid = false;
+    if (origin) {
+        try {
+            const parsed = new URL(origin);
+            if (parsed.host === host) valid = true;
+        } catch {}
+    } else if (referer) {
+        try {
+            const parsed = new URL(referer);
+            if (parsed.host === host) valid = true;
+        } catch {}
+    } else {
+        // No Origin/Referer (rare for browsers), assume API client with other auth or strict same-site
+        // But for browser session auth, we expect one.
+        // If it's a direct API call without browser session cookies, this middleware is skipped or valid.
+        // If it HAS session cookies but no headers, it's suspicious.
+        // However, standard fetch/XHR sends Origin/Referer.
+        // Let's rely on custom header presence if available, or just fail safe.
+        // For simplicity and standard compliance:
+        valid = false;
+    }
+
+    // Allow if request has X-Requested-With (AJAX) or a custom API key (handled by other middleware)
+    if (req.get('x-requested-with') || req.get('x-api-key') || req.get('authorization')) {
+        valid = true;
+    }
+
+    if (!valid) {
+        console.warn(`[CSRF] Blocked request to ${req.path} from Origin: ${origin}, Referer: ${referer}`);
+        return res.status(403).json({ error: 'CSRF_VIOLATION' });
+    }
+    next();
+};
+
 const requireAuthForSettings = (req, res, next) => {
     if (process.env.NODE_ENV !== 'production') return next();
-    return requireAuth(req, res, next);
+    // Chain rate limiter and auth
+    return settingsRateLimiter(req, res, (err) => {
+        if (err) return next(err);
+        requireAuth(req, res, next);
+    });
 };
 
 const isLoopback = (ip) => {
@@ -543,46 +604,46 @@ app.post('/api/settings/user-agent', requireAuthForSettings, (req, res) => {
 });
 
 // --- PROXY SETTINGS ---
-app.get('/api/settings/proxies', requireAuthForSettings, (_req, res) => {
+app.get('/api/settings/proxies', requireAuthForSettings, async (_req, res) => {
     try {
-        res.json(listProxies());
+        res.json(await listProxies());
     } catch (e) {
         console.error('[PROXIES] Load failed:', e);
         res.status(500).json({ error: 'PROXY_LOAD_FAILED' });
     }
 });
 
-app.post('/api/settings/proxies', requireAuthForSettings, (req, res) => {
+app.post('/api/settings/proxies', requireAuthForSettings, async (req, res) => {
     const { server, username, password, label } = req.body || {};
     if (!server || typeof server !== 'string') {
         return res.status(400).json({ error: 'MISSING_SERVER' });
     }
     try {
-        const result = addProxy({ server, username, password, label });
+        const result = await addProxy({ server, username, password, label });
         if (!result) return res.status(400).json({ error: 'INVALID_PROXY' });
-        res.json(listProxies());
+        res.json(await listProxies());
     } catch (e) {
         console.error('[PROXIES] Add failed:', e);
         res.status(500).json({ error: 'PROXY_SAVE_FAILED' });
     }
 });
 
-app.post('/api/settings/proxies/import', requireAuthForSettings, (req, res) => {
+app.post('/api/settings/proxies/import', requireAuthForSettings, async (req, res) => {
     const entries = req.body && Array.isArray(req.body.proxies) ? req.body.proxies : [];
     if (entries.length === 0) {
         return res.status(400).json({ error: 'MISSING_PROXIES' });
     }
     try {
-        const result = addProxies(entries);
+        const result = await addProxies(entries);
         if (!result) return res.status(400).json({ error: 'INVALID_PROXY' });
-        res.json(listProxies());
+        res.json(await listProxies());
     } catch (e) {
         console.error('[PROXIES] Import failed:', e);
         res.status(500).json({ error: 'PROXY_IMPORT_FAILED' });
     }
 });
 
-app.put('/api/settings/proxies/:id', requireAuthForSettings, (req, res) => {
+app.put('/api/settings/proxies/:id', requireAuthForSettings, async (req, res) => {
     const id = String(req.params.id || '').trim();
     if (!id || id === 'host') return res.status(400).json({ error: 'INVALID_ID' });
     const { server, username, password, label } = req.body || {};
@@ -590,49 +651,49 @@ app.put('/api/settings/proxies/:id', requireAuthForSettings, (req, res) => {
         return res.status(400).json({ error: 'MISSING_SERVER' });
     }
     try {
-        const result = updateProxy(id, { server, username, password, label });
+        const result = await updateProxy(id, { server, username, password, label });
         if (!result) return res.status(404).json({ error: 'PROXY_NOT_FOUND' });
-        res.json(listProxies());
+        res.json(await listProxies());
     } catch (e) {
         console.error('[PROXIES] Update failed:', e);
         res.status(500).json({ error: 'PROXY_UPDATE_FAILED' });
     }
 });
 
-app.delete('/api/settings/proxies/:id', requireAuthForSettings, (req, res) => {
+app.delete('/api/settings/proxies/:id', requireAuthForSettings, async (req, res) => {
     const id = String(req.params.id || '').trim();
     if (!id) return res.status(400).json({ error: 'MISSING_ID' });
     try {
-        const result = deleteProxy(id);
+        const result = await deleteProxy(id);
         if (!result) return res.status(404).json({ error: 'PROXY_NOT_FOUND' });
-        res.json(listProxies());
+        res.json(await listProxies());
     } catch (e) {
         console.error('[PROXIES] Delete failed:', e);
         res.status(500).json({ error: 'PROXY_DELETE_FAILED' });
     }
 });
 
-app.post('/api/settings/proxies/default', requireAuthForSettings, (req, res) => {
+app.post('/api/settings/proxies/default', requireAuthForSettings, async (req, res) => {
     const id = req.body && req.body.id ? String(req.body.id) : '';
     try {
-        const result = setDefaultProxy(id || null);
+        const result = await setDefaultProxy(id || null);
         if (!result) return res.status(404).json({ error: 'PROXY_NOT_FOUND' });
-        res.json(listProxies());
+        res.json(await listProxies());
     } catch (e) {
         console.error('[PROXIES] Default failed:', e);
         res.status(500).json({ error: 'PROXY_DEFAULT_FAILED' });
     }
 });
 
-app.post('/api/settings/proxies/rotation', requireAuthForSettings, (req, res) => {
+app.post('/api/settings/proxies/rotation', requireAuthForSettings, async (req, res) => {
     const body = req.body || {};
     const hasIncludeDefault = Object.prototype.hasOwnProperty.call(body, 'includeDefaultInRotation');
     const includeDefaultInRotation = !!body.includeDefaultInRotation;
     const rotationMode = typeof body.rotationMode === 'string' ? body.rotationMode : null;
     try {
-        if (hasIncludeDefault) setIncludeDefaultInRotation(includeDefaultInRotation);
-        if (rotationMode) setRotationMode(rotationMode);
-        res.json(listProxies());
+        if (hasIncludeDefault) await setIncludeDefaultInRotation(includeDefaultInRotation);
+        if (rotationMode) await setRotationMode(rotationMode);
+        res.json(await listProxies());
     } catch (e) {
         console.error('[PROXIES] Rotation toggle failed:', e);
         res.status(500).json({ error: 'PROXY_ROTATION_FAILED' });

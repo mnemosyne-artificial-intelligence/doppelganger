@@ -123,7 +123,7 @@ async function handleScrape(req, res) {
                 '--mute-audio'
             ]
         };
-        const selection = getProxySelection(rotateProxies);
+        const selection = await getProxySelection(rotateProxies);
         if (selection.proxy) {
             launchOptions.proxy = selection.proxy;
         }

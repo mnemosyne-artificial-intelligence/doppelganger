@@ -1,4 +1,4 @@
-const fs = require('fs');
+const fs = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
 
@@ -17,6 +17,40 @@ let cached = {
 };
 let rotationIndex = 0;
 
+class Mutex {
+    constructor() {
+        this.queue = [];
+        this.locked = false;
+    }
+
+    async acquire() {
+        if (this.locked) {
+            await new Promise(resolve => this.queue.push(resolve));
+        }
+        this.locked = true;
+    }
+
+    release() {
+        if (this.queue.length > 0) {
+            const next = this.queue.shift();
+            next();
+        } else {
+            this.locked = false;
+        }
+    }
+
+    async run(fn) {
+        await this.acquire();
+        try {
+            return await fn();
+        } finally {
+            this.release();
+        }
+    }
+}
+
+const mutex = new Mutex();
+
 const normalizeServer = (raw) => {
     if (!raw) return '';
     let server = String(raw).trim();
@@ -28,8 +62,8 @@ const normalizeServer = (raw) => {
 };
 
 const createProxyId = (seed) => {
-    // SHA-1 is used purely for deterministic, non-secret IDs so CodeQL’s weak-crypto warning is a false positive.
-    const hash = crypto.createHash('sha1').update(String(seed)).digest('hex').slice(0, 12);
+    // SHA-256 is used purely for deterministic, non-secret IDs.
+    const hash = crypto.createHash('sha256').update(String(seed)).digest('hex').slice(0, 12);
     return `proxy_${hash}`;
 };
 
@@ -46,8 +80,9 @@ const normalizeProxy = (entry) => {
             const server = `${parsed.protocol}//${parsed.host}`;
             const username = parsed.username ? decodeURIComponent(parsed.username) : undefined;
             const password = parsed.password ? decodeURIComponent(parsed.password) : undefined;
+            // ID derived from server and username only to avoid hashing passwords
             return {
-                id: createProxyId(`${server}|${username || ''}|${password || ''}`),
+                id: createProxyId(`${server}|${username || ''}`),
                 server,
                 username,
                 password
@@ -62,7 +97,8 @@ const normalizeProxy = (entry) => {
         if (!server) return null;
         const username = entry.username || entry.user;
         const password = entry.password || entry.pass;
-        const id = entry.id || createProxyId(`${server}|${username || ''}|${password || ''}`);
+        // ID derived from server and username only to avoid hashing passwords
+        const id = entry.id || createProxyId(`${server}|${username || ''}`);
         return {
             id,
             server,
@@ -79,9 +115,9 @@ const normalizeRotationMode = (mode) => {
     return 'round-robin';
 };
 
-const loadProxyFile = (filePath) => {
+const loadProxyFile = async (filePath) => {
     try {
-        const raw = fs.readFileSync(filePath, 'utf8');
+        const raw = await fs.readFile(filePath, 'utf8');
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
             return { proxies: parsed, defaultProxyId: null, includeDefaultInRotation: false, rotationMode: 'round-robin' };
@@ -96,14 +132,23 @@ const loadProxyFile = (filePath) => {
     }
 };
 
-const loadProxyConfig = () => {
-    const filePath = PROXY_FILES.find((candidate) => {
-        try {
-            return fs.existsSync(candidate);
-        } catch {
-            return false;
+const fileExists = async (filePath) => {
+    try {
+        await fs.access(filePath);
+        return true;
+    } catch {
+        return false;
+    }
+};
+
+const loadProxyConfig = async () => {
+    let filePath = null;
+    for (const candidate of PROXY_FILES) {
+        if (await fileExists(candidate)) {
+            filePath = candidate;
+            break;
         }
-    });
+    }
 
     if (!filePath) {
         cached = { file: null, mtimeMs: 0, config: { proxies: [], defaultProxyId: null, includeDefaultInRotation: false, rotationMode: 'round-robin' } };
@@ -111,12 +156,12 @@ const loadProxyConfig = () => {
     }
 
     try {
-        const stat = fs.statSync(filePath);
+        const stat = await fs.stat(filePath);
         const mtimeMs = stat.mtimeMs || 0;
         if (cached.file === filePath && cached.mtimeMs === mtimeMs) {
             return cached.config;
         }
-        const rawConfig = loadProxyFile(filePath);
+        const rawConfig = await loadProxyFile(filePath);
         const proxies = rawConfig.proxies.map(normalizeProxy).filter(Boolean);
         const defaultProxyId = rawConfig.defaultProxyId && proxies.some((proxy) => proxy.id === rawConfig.defaultProxyId)
             ? rawConfig.defaultProxyId
@@ -135,7 +180,7 @@ const loadProxyConfig = () => {
     }
 };
 
-const saveProxyConfig = (config) => {
+const saveProxyConfig = async (config) => {
     const target = DATA_PROXY_FILE;
     const payload = {
         defaultProxyId: config.defaultProxyId || null,
@@ -143,9 +188,9 @@ const saveProxyConfig = (config) => {
         includeDefaultInRotation: !!config.includeDefaultInRotation,
         rotationMode: normalizeRotationMode(config.rotationMode)
     };
-    fs.writeFileSync(target, JSON.stringify(payload, null, 2));
+    await fs.writeFile(target, JSON.stringify(payload, null, 2));
     try {
-        const stat = fs.statSync(target);
+        const stat = await fs.stat(target);
         cached = { file: target, mtimeMs: stat.mtimeMs || 0, config: payload };
     } catch {
         cached = { file: target, mtimeMs: 0, config: payload };
@@ -153,8 +198,8 @@ const saveProxyConfig = (config) => {
     return payload;
 };
 
-const listProxies = () => {
-    const config = loadProxyConfig();
+const listProxies = () => mutex.run(async () => {
+    const config = await loadProxyConfig();
     const hostEntry = {
         id: 'host',
         server: 'host_ip',
@@ -166,22 +211,22 @@ const listProxies = () => {
         includeDefaultInRotation: !!config.includeDefaultInRotation,
         rotationMode: normalizeRotationMode(config.rotationMode)
     };
-};
+});
 
-const addProxy = (entry) => {
+const addProxy = (entry) => mutex.run(async () => {
     const normalized = normalizeProxy(entry);
     if (!normalized) return null;
-    const config = loadProxyConfig();
+    const config = await loadProxyConfig();
     const proxies = [...config.proxies, { ...normalized, id: `proxy_${crypto.randomBytes(6).toString('hex')}` }];
     const next = { ...config, proxies };
-    return saveProxyConfig(next);
-};
+    return await saveProxyConfig(next);
+});
 
-const addProxies = (entries) => {
+const addProxies = (entries) => mutex.run(async () => {
     if (!Array.isArray(entries)) return null;
     const normalizedEntries = entries.map(normalizeProxy).filter(Boolean);
     if (normalizedEntries.length === 0) return null;
-    const config = loadProxyConfig();
+    const config = await loadProxyConfig();
     const existingByServer = new Map(
         config.proxies.map((proxy) => [String(proxy.server || '').toLowerCase(), proxy])
     );
@@ -209,48 +254,48 @@ const addProxies = (entries) => {
 
     const proxies = [...merged, ...additions];
     const next = { ...config, proxies };
-    return saveProxyConfig(next);
-};
+    return await saveProxyConfig(next);
+});
 
-const updateProxy = (id, entry) => {
+const updateProxy = (id, entry) => mutex.run(async () => {
     if (!id) return null;
     const normalized = normalizeProxy(entry);
     if (!normalized) return null;
-    const config = loadProxyConfig();
+    const config = await loadProxyConfig();
     const proxies = config.proxies.map((proxy) => {
         if (proxy.id !== id) return proxy;
         return { ...proxy, ...normalized, id };
     });
     if (!proxies.some((proxy) => proxy.id === id)) return null;
-    return saveProxyConfig({ ...config, proxies });
-};
+    return await saveProxyConfig({ ...config, proxies });
+});
 
-const deleteProxy = (id) => {
+const deleteProxy = (id) => mutex.run(async () => {
     if (!id) return null;
-    const config = loadProxyConfig();
+    const config = await loadProxyConfig();
     const proxies = config.proxies.filter((proxy) => proxy.id !== id);
     const defaultProxyId = config.defaultProxyId === id ? null : config.defaultProxyId;
-    return saveProxyConfig({ ...config, proxies, defaultProxyId });
-};
+    return await saveProxyConfig({ ...config, proxies, defaultProxyId });
+});
 
-const setDefaultProxy = (id) => {
-    const config = loadProxyConfig();
+const setDefaultProxy = (id) => mutex.run(async () => {
+    const config = await loadProxyConfig();
     if (!id) {
-        return saveProxyConfig({ ...config, defaultProxyId: null });
+        return await saveProxyConfig({ ...config, defaultProxyId: null });
     }
     if (!config.proxies.some((proxy) => proxy.id === id)) return null;
-    return saveProxyConfig({ ...config, defaultProxyId: id });
-};
+    return await saveProxyConfig({ ...config, defaultProxyId: id });
+});
 
-const setIncludeDefaultInRotation = (enabled) => {
-    const config = loadProxyConfig();
-    return saveProxyConfig({ ...config, includeDefaultInRotation: !!enabled });
-};
+const setIncludeDefaultInRotation = (enabled) => mutex.run(async () => {
+    const config = await loadProxyConfig();
+    return await saveProxyConfig({ ...config, includeDefaultInRotation: !!enabled });
+});
 
-const setRotationMode = (mode) => {
-    const config = loadProxyConfig();
-    return saveProxyConfig({ ...config, rotationMode: normalizeRotationMode(mode) });
-};
+const setRotationMode = (mode) => mutex.run(async () => {
+    const config = await loadProxyConfig();
+    return await saveProxyConfig({ ...config, rotationMode: normalizeRotationMode(mode) });
+});
 
 const getNextProxy = (proxies, mode) => {
     if (!proxies.length) return null;
@@ -263,8 +308,8 @@ const getNextProxy = (proxies, mode) => {
     return selected;
 };
 
-const getProxySelection = (rotateProxies) => {
-    const config = loadProxyConfig();
+const getProxySelection = (rotateProxies) => mutex.run(async () => {
+    const config = await loadProxyConfig();
     const proxies = config.proxies || [];
     const hostEntry = { id: 'host', server: 'host_ip', label: 'Host IP (no proxy)' };
     const pool = [hostEntry, ...proxies];
@@ -294,7 +339,7 @@ const getProxySelection = (rotateProxies) => {
 
     if (defaultProxy) return { proxy: defaultProxy, mode: 'default' };
     return { proxy: null, mode: 'host' };
-};
+});
 
 module.exports = {
     getProxySelection,

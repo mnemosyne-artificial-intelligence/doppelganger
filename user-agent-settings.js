@@ -56,11 +56,11 @@ const getUserAgentConfig = () => {
 
 const setUserAgentSelection = (selection) => saveUserAgentConfig(selection);
 
-const selectUserAgent = (rotateUserAgents) => {
+const selectUserAgent = (rotateUserAgents, configLoader = loadUserAgentConfig) => {
     if (rotateUserAgents) {
         return userAgents[Math.floor(Math.random() * userAgents.length)];
     }
-    const config = loadUserAgentConfig();
+    const config = configLoader();
     if (config.selection === DEFAULT_SELECTION) return userAgents[0];
     return config.selection;
 };

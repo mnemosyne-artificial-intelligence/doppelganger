@@ -79,18 +79,7 @@ const saveSession = (req) => new Promise((resolve, reject) => {
 
 const TASKS_FILE = path.join(__dirname, 'data', 'tasks.json');
 const API_KEY_FILE = path.join(__dirname, 'data', 'api_key.json');
-const STORAGE_STATE_PATH = path.join(__dirname, 'storage_state.json');
-const STORAGE_STATE_FILE = (() => {
-    try {
-        if (fs.existsSync(STORAGE_STATE_PATH)) {
-            const stat = fs.statSync(STORAGE_STATE_PATH);
-            if (stat.isDirectory()) {
-                return path.join(STORAGE_STATE_PATH, 'storage_state.json');
-            }
-        }
-    } catch {}
-    return STORAGE_STATE_PATH;
-})();
+const { STORAGE_STATE_FILE } = require('./storage-config');
 const MAX_TASK_VERSIONS = 30;
 const EXECUTIONS_FILE = path.join(__dirname, 'data', 'executions.json');
 const MAX_EXECUTIONS = 500;

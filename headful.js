@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { getProxySelection } = require('./proxy-rotation');
 const { selectUserAgent } = require('./user-agent-settings');
+const { parseBooleanFlag } = require('./utils/common');
 
 const STORAGE_STATE_PATH = path.join(__dirname, 'storage_state.json');
 const STORAGE_STATE_FILE = (() => {
@@ -16,13 +17,6 @@ const STORAGE_STATE_FILE = (() => {
     } catch {}
     return STORAGE_STATE_PATH;
 })();
-
-const parseBooleanFlag = (value) => {
-    if (typeof value === 'boolean') return value;
-    if (value === undefined || value === null) return false;
-    const normalized = String(value).toLowerCase();
-    return normalized === 'true' || normalized === '1';
-};
 
 let activeSession = null;
 

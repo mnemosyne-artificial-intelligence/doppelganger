@@ -5,6 +5,7 @@ const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { normalizeIp } = require('./lib/ip');
 const net = require('net');
 const rateLimit = require('express-rate-limit');
 const app = express();
@@ -256,15 +257,6 @@ function generateApiKey() {
 }
 
 let allowedIpsCache = { env: null, file: null, mtimeMs: 0, set: null };
-
-const normalizeIp = (raw) => {
-    if (!raw) return '';
-    let ip = String(raw).split(',')[0].trim();
-    if (ip.startsWith('::ffff:')) ip = ip.slice(7);
-    if (ip.startsWith('[') && ip.endsWith(']')) ip = ip.slice(1, -1);
-    if (ip.includes('%')) ip = ip.split('%')[0];
-    return ip;
-};
 
 const parseIpList = (input) => {
     if (!input) return [];

@@ -80,8 +80,9 @@ const normalizeProxy = (entry) => {
             const server = `${parsed.protocol}//${parsed.host}`;
             const username = parsed.username ? decodeURIComponent(parsed.username) : undefined;
             const password = parsed.password ? decodeURIComponent(parsed.password) : undefined;
+            // ID derived from server and username only to avoid hashing passwords
             return {
-                id: createProxyId(`${server}|${username || ''}|${password || ''}`),
+                id: createProxyId(`${server}|${username || ''}`),
                 server,
                 username,
                 password
@@ -96,7 +97,8 @@ const normalizeProxy = (entry) => {
         if (!server) return null;
         const username = entry.username || entry.user;
         const password = entry.password || entry.pass;
-        const id = entry.id || createProxyId(`${server}|${username || ''}|${password || ''}`);
+        // ID derived from server and username only to avoid hashing passwords
+        const id = entry.id || createProxyId(`${server}|${username || ''}`);
         return {
             id,
             server,

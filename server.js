@@ -402,9 +402,59 @@ const requireAuth = (req, res, next) => {
     }
 };
 
+// CSRF Protection Middleware
+const checkCsrf = (req, res, next) => {
+    // Skip for GET/HEAD/OPTIONS
+    if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+
+    // Skip if not authenticated session
+    if (!req.session || !req.session.user) return next();
+
+    // Check Origin or Referer matches Host
+    const origin = req.headers.origin;
+    const referer = req.headers.referer;
+    const host = req.headers.host;
+
+    let valid = false;
+    if (origin) {
+        try {
+            const parsed = new URL(origin);
+            if (parsed.host === host) valid = true;
+        } catch {}
+    } else if (referer) {
+        try {
+            const parsed = new URL(referer);
+            if (parsed.host === host) valid = true;
+        } catch {}
+    } else {
+        // No Origin/Referer (rare for browsers), assume API client with other auth or strict same-site
+        // But for browser session auth, we expect one.
+        // If it's a direct API call without browser session cookies, this middleware is skipped or valid.
+        // If it HAS session cookies but no headers, it's suspicious.
+        // However, standard fetch/XHR sends Origin/Referer.
+        // Let's rely on custom header presence if available, or just fail safe.
+        // For simplicity and standard compliance:
+        valid = false;
+    }
+
+    // Allow if request has X-Requested-With (AJAX) or a custom API key (handled by other middleware)
+    if (req.get('x-requested-with') || req.get('x-api-key') || req.get('authorization')) {
+        valid = true;
+    }
+
+    if (!valid) {
+        console.warn(`[CSRF] Blocked request to ${req.path} from Origin: ${origin}, Referer: ${referer}`);
+        return res.status(403).json({ error: 'CSRF_VIOLATION' });
+    }
+    next();
+};
+
 const requireAuthForSettings = (req, res, next) => {
     if (process.env.NODE_ENV !== 'production') return next();
-    return requireAuth(req, res, next);
+    return requireAuth(req, res, (err) => {
+        if (err) return next(err);
+        checkCsrf(req, res, next);
+    });
 };
 
 const isLoopback = (ip) => {

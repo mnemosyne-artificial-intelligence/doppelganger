@@ -106,6 +106,16 @@ const authRateLimiter = rateLimit({
     legacyHeaders: false
 });
 
+const EXECUTION_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
+const EXECUTION_RATE_LIMIT_MAX = Number(process.env.EXECUTION_RATE_LIMIT_MAX || 60);
+const executionRateLimiter = rateLimit({
+    windowMs: EXECUTION_LIMIT_WINDOW_MS,
+    max: EXECUTION_RATE_LIMIT_MAX,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'TOO_MANY_REQUESTS' }
+});
+
 const sendExecutionUpdate = (runId, payload) => {
     if (!runId) return;
     const clients = executionStreams.get(runId);
@@ -915,7 +925,7 @@ app.post('/api/data/cookies/delete', requireAuth, (req, res) => {
 });
 
 // --- TASK API EXECUTION ---
-app.post('/tasks/:id/api', requireApiKey, async (req, res) => {
+app.post('/tasks/:id/api', executionRateLimiter, requireApiKey, async (req, res) => {
     const tasks = loadTasks();
     const task = tasks.find(t => String(t.id) === String(req.params.id));
     if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
@@ -1045,15 +1055,15 @@ app.get('/executions/:id', requireAuth, (req, res) => {
 });
 
 // Execution endpoints
-app.all('/scrape', requireAuth, (req, res) => {
+app.all('/scrape', executionRateLimiter, requireAuth, (req, res) => {
     registerExecution(req, res, { mode: 'scrape' });
     return handleScrape(req, res);
 });
-app.all('/scraper', requireAuth, (req, res) => {
+app.all('/scraper', executionRateLimiter, requireAuth, (req, res) => {
     registerExecution(req, res, { mode: 'scrape' });
     return handleScrape(req, res);
 });
-app.all('/agent', requireAuth, (req, res) => {
+app.all('/agent', executionRateLimiter, requireAuth, (req, res) => {
     registerExecution(req, res, { mode: 'agent' });
     try {
         const runId = String((req.body && req.body.runId) || req.query.runId || '').trim();
@@ -1065,7 +1075,7 @@ app.all('/agent', requireAuth, (req, res) => {
     }
     return handleAgent(req, res);
 });
-app.post('/headful', requireAuth, (req, res) => {
+app.post('/headful', executionRateLimiter, requireAuth, (req, res) => {
     registerExecution(req, res, { mode: 'headful' });
     if (req.body && typeof req.body.url === 'string') {
         const vars = req.body.taskVariables || req.body.variables || {};

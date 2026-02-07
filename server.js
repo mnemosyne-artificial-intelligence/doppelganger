@@ -381,6 +381,7 @@ app.use(session({
     cookie: {
         // CodeQL warns about insecure cookies; we only set secure=true when NODE_ENV=production or SESSION_COOKIE_SECURE explicitly enables it.
         secure: SESSION_COOKIE_SECURE,
+        httpOnly: true,
         maxAge: SESSION_TTL_SECONDS * 1000,
         sameSite: 'lax'
     }
@@ -924,7 +925,7 @@ app.post('/api/data/cookies/delete', requireAuth, dataRateLimiter, (req, res) =>
 });
 
 // --- TASK API EXECUTION ---
-app.post('/tasks/:id/api', requireApiKey, async (req, res) => {
+app.post('/tasks/:id/api', requireApiKey, dataRateLimiter, async (req, res) => {
     const tasks = loadTasks();
     const task = tasks.find(t => String(t.id) === String(req.params.id));
     if (!task) return res.status(404).json({ error: 'TASK_NOT_FOUND' });
@@ -1054,15 +1055,15 @@ app.get('/executions/:id', requireAuth, (req, res) => {
 });
 
 // Execution endpoints
-app.all('/scrape', requireAuth, (req, res) => {
+app.all('/scrape', requireAuth, dataRateLimiter, (req, res) => {
     registerExecution(req, res, { mode: 'scrape' });
     return handleScrape(req, res);
 });
-app.all('/scraper', requireAuth, (req, res) => {
+app.all('/scraper', requireAuth, dataRateLimiter, (req, res) => {
     registerExecution(req, res, { mode: 'scrape' });
     return handleScrape(req, res);
 });
-app.all('/agent', requireAuth, (req, res) => {
+app.all('/agent', requireAuth, dataRateLimiter, (req, res) => {
     registerExecution(req, res, { mode: 'agent' });
     try {
         const runId = String((req.body && req.body.runId) || req.query.runId || '').trim();
@@ -1074,7 +1075,7 @@ app.all('/agent', requireAuth, (req, res) => {
     }
     return handleAgent(req, res);
 });
-app.post('/headful', requireAuth, (req, res) => {
+app.post('/headful', requireAuth, dataRateLimiter, (req, res) => {
     registerExecution(req, res, { mode: 'headful' });
     if (req.body && typeof req.body.url === 'string') {
         const vars = req.body.taskVariables || req.body.variables || {};
@@ -1086,7 +1087,7 @@ app.post('/headful', requireAuth, (req, res) => {
     }
     return handleHeadful(req, res);
 });
-app.post('/headful/stop', requireAuth, stopHeadful);
+app.post('/headful/stop', requireAuth, dataRateLimiter, stopHeadful);
 
 // Ensure public/captures directory exists
 const capturesDir = path.join(__dirname, 'public', 'captures');

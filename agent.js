@@ -167,6 +167,43 @@ async function humanType(page, selector, text, options = {}) {
     }
 }
 
+const buildBlockMap = (list) => {
+    const blockStarts = new Set(['if', 'while', 'repeat', 'foreach', 'on_error']);
+    const startToEnd = {};
+    const startToElse = {};
+    const elseToEnd = {};
+    const endToStart = {};
+    const stack = [];
+
+    list.forEach((action, idx) => {
+        if (blockStarts.has(action.type)) {
+            stack.push({ type: action.type, idx });
+            return;
+        }
+        if (action.type === 'else') {
+            for (let i = stack.length - 1; i >= 0; i -= 1) {
+                const entry = stack[i];
+                if (entry.type === 'if' && startToElse[entry.idx] === undefined) {
+                    startToElse[entry.idx] = idx;
+                    break;
+                }
+            }
+            return;
+        }
+        if (action.type === 'end') {
+            const entry = stack.pop();
+            if (!entry) return;
+            startToEnd[entry.idx] = idx;
+            endToStart[idx] = entry.idx;
+            if (startToElse[entry.idx] !== undefined) {
+                elseToEnd[startToElse[entry.idx]] = idx;
+            }
+        }
+    });
+
+    return { startToEnd, startToElse, elseToEnd, endToStart };
+};
+
 async function handleAgent(req, res) {
     const data = (req.method === 'POST') ? req.body : req.query;
     let { url, actions, wait: globalWait, rotateUserAgents, rotateProxies, humanTyping, stealth = {} } = data;
@@ -369,43 +406,6 @@ async function handleAgent(req, res) {
             return allKeys.map((key) => csvEscape(obj[key])).join(',');
         });
         return [headerLine, ...lines].join('\n');
-    };
-
-    const buildBlockMap = (list) => {
-        const blockStarts = new Set(['if', 'while', 'repeat', 'foreach', 'on_error']);
-        const startToEnd = {};
-        const startToElse = {};
-        const elseToEnd = {};
-        const endToStart = {};
-        const stack = [];
-
-        list.forEach((action, idx) => {
-            if (blockStarts.has(action.type)) {
-                stack.push({ type: action.type, idx });
-                return;
-            }
-            if (action.type === 'else') {
-                for (let i = stack.length - 1; i >= 0; i -= 1) {
-                    const entry = stack[i];
-                    if (entry.type === 'if' && startToElse[entry.idx] === undefined) {
-                        startToElse[entry.idx] = idx;
-                        break;
-                    }
-                }
-                return;
-            }
-            if (action.type === 'end') {
-                const entry = stack.pop();
-                if (!entry) return;
-                startToEnd[entry.idx] = idx;
-                endToStart[idx] = entry.idx;
-                if (startToElse[entry.idx] !== undefined) {
-                    elseToEnd[startToElse[entry.idx]] = idx;
-                }
-            }
-        });
-
-        return { startToEnd, startToElse, elseToEnd, endToStart };
     };
 
     const selectedUA = selectUserAgent(rotateUserAgents);
@@ -1484,4 +1484,4 @@ async function handleAgent(req, res) {
     }
 }
 
-module.exports = { handleAgent, setProgressReporter, setStopChecker };
+module.exports = { handleAgent, setProgressReporter, setStopChecker, buildBlockMap };

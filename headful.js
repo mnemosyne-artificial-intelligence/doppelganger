@@ -87,9 +87,12 @@ async function handleHeadful(req, res) {
             timezoneId: 'America/New_York'
         };
 
-        if (!statelessExecution && fs.existsSync(STORAGE_STATE_FILE)) {
-            console.log('Loading existing storage state...');
-            contextOptions.storageState = STORAGE_STATE_FILE;
+        if (!statelessExecution) {
+            try {
+                await fs.promises.access(STORAGE_STATE_FILE);
+                console.log('Loading existing storage state...');
+                contextOptions.storageState = STORAGE_STATE_FILE;
+            } catch {}
         }
 
         const context = await browser.newContext(contextOptions);

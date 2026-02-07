@@ -387,7 +387,7 @@ app.use(session({
     cookie: {
         // CodeQL warns about insecure cookies; we only set secure=true when NODE_ENV=production or SESSION_COOKIE_SECURE explicitly enables it.
         secure: SESSION_COOKIE_SECURE,
-        sameSite: 'lax', // Mitigate CSRF
+        sameSite: 'strict', // Mitigate CSRF
         maxAge: SESSION_TTL_SECONDS * 1000
     }
 }));

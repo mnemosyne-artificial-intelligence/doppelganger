@@ -392,7 +392,8 @@ const requireAuth = (req, res, next) => {
         console.log(`[AUTH] Path: ${req.path}, Session: ${req.session.user ? 'YES' : 'NO'}`);
     }
     if (req.session.user) {
-        next();
+        // Enforce CSRF check for all authenticated sessions
+        checkCsrf(req, res, next);
     } else {
         if (req.xhr || req.path.startsWith('/api/')) {
             res.status(401).json({ error: 'UNAUTHORIZED' });
@@ -451,9 +452,10 @@ const checkCsrf = (req, res, next) => {
 
 const requireAuthForSettings = (req, res, next) => {
     if (process.env.NODE_ENV !== 'production') return next();
-    return requireAuth(req, res, (err) => {
+    // Chain rate limiter and auth
+    return settingsRateLimiter(req, res, (err) => {
         if (err) return next(err);
-        checkCsrf(req, res, next);
+        requireAuth(req, res, next);
     });
 };
 
@@ -602,7 +604,7 @@ app.post('/api/settings/user-agent', requireAuthForSettings, (req, res) => {
 });
 
 // --- PROXY SETTINGS ---
-app.get('/api/settings/proxies', requireAuthForSettings, settingsRateLimiter, async (_req, res) => {
+app.get('/api/settings/proxies', requireAuthForSettings, async (_req, res) => {
     try {
         res.json(await listProxies());
     } catch (e) {
@@ -611,7 +613,7 @@ app.get('/api/settings/proxies', requireAuthForSettings, settingsRateLimiter, as
     }
 });
 
-app.post('/api/settings/proxies', requireAuthForSettings, settingsRateLimiter, async (req, res) => {
+app.post('/api/settings/proxies', requireAuthForSettings, async (req, res) => {
     const { server, username, password, label } = req.body || {};
     if (!server || typeof server !== 'string') {
         return res.status(400).json({ error: 'MISSING_SERVER' });
@@ -626,7 +628,7 @@ app.post('/api/settings/proxies', requireAuthForSettings, settingsRateLimiter, a
     }
 });
 
-app.post('/api/settings/proxies/import', requireAuthForSettings, settingsRateLimiter, async (req, res) => {
+app.post('/api/settings/proxies/import', requireAuthForSettings, async (req, res) => {
     const entries = req.body && Array.isArray(req.body.proxies) ? req.body.proxies : [];
     if (entries.length === 0) {
         return res.status(400).json({ error: 'MISSING_PROXIES' });
@@ -641,7 +643,7 @@ app.post('/api/settings/proxies/import', requireAuthForSettings, settingsRateLim
     }
 });
 
-app.put('/api/settings/proxies/:id', requireAuthForSettings, settingsRateLimiter, async (req, res) => {
+app.put('/api/settings/proxies/:id', requireAuthForSettings, async (req, res) => {
     const id = String(req.params.id || '').trim();
     if (!id || id === 'host') return res.status(400).json({ error: 'INVALID_ID' });
     const { server, username, password, label } = req.body || {};
@@ -658,7 +660,7 @@ app.put('/api/settings/proxies/:id', requireAuthForSettings, settingsRateLimiter
     }
 });
 
-app.delete('/api/settings/proxies/:id', requireAuthForSettings, settingsRateLimiter, async (req, res) => {
+app.delete('/api/settings/proxies/:id', requireAuthForSettings, async (req, res) => {
     const id = String(req.params.id || '').trim();
     if (!id) return res.status(400).json({ error: 'MISSING_ID' });
     try {
@@ -671,7 +673,7 @@ app.delete('/api/settings/proxies/:id', requireAuthForSettings, settingsRateLimi
     }
 });
 
-app.post('/api/settings/proxies/default', requireAuthForSettings, settingsRateLimiter, async (req, res) => {
+app.post('/api/settings/proxies/default', requireAuthForSettings, async (req, res) => {
     const id = req.body && req.body.id ? String(req.body.id) : '';
     try {
         const result = await setDefaultProxy(id || null);
@@ -683,7 +685,7 @@ app.post('/api/settings/proxies/default', requireAuthForSettings, settingsRateLi
     }
 });
 
-app.post('/api/settings/proxies/rotation', requireAuthForSettings, settingsRateLimiter, async (req, res) => {
+app.post('/api/settings/proxies/rotation', requireAuthForSettings, async (req, res) => {
     const body = req.body || {};
     const hasIncludeDefault = Object.prototype.hasOwnProperty.call(body, 'includeDefaultInRotation');
     const includeDefaultInRotation = !!body.includeDefaultInRotation;

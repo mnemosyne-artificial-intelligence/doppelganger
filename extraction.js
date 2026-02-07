@@ -60,13 +60,17 @@ const runExtractionScript = async (script, html, pageUrl, includeShadowDom) => {
             return { shadowQueryAll, shadowText };
         })();
 
-        // Using vm.Script + vm.runInContext for sandboxed execution.
-        // This is safer than `new Function` and allows specifying timeouts.
+        // Sandbox environment for the script.
+        // We expose common globals that are expected in a browser-like environment.
         const sandbox = {
             window,
             document: window.document,
             DOMParser: window.DOMParser,
             console: consoleProxy,
+            setTimeout: window.setTimeout.bind(window),
+            clearTimeout: window.clearTimeout.bind(window),
+            setInterval: window.setInterval.bind(window),
+            clearInterval: window.clearInterval.bind(window),
             $$data: {
                 html: () => html || '',
                 url: () => pageUrl || '',
@@ -78,15 +82,24 @@ const runExtractionScript = async (script, html, pageUrl, includeShadowDom) => {
         };
 
         const context = vm.createContext(sandbox);
-        const code = `(async () => { "use strict"; ${script} })()`;
+
+        // Wrap the user script in an async IIFE to support top-level await.
+        // We use vm.compileFunction to create a function bound to the sandbox context.
+        const wrapper = `return (async () => { "use strict"; ${script} })()`;
 
         try {
-            const scriptOptions = {
-                filename: 'extraction_script.js',
-                timeout: 30000 // 30s timeout for safety
-            };
-            const vmScript = new vm.Script(code, scriptOptions);
-            const result = await vmScript.runInContext(context, scriptOptions);
+            const compiled = vm.compileFunction(wrapper, [], {
+                parsingContext: context,
+                filename: 'extraction_script.js'
+            });
+
+            const executionPromise = compiled();
+
+            const timeoutPromise = new Promise((_, reject) => {
+                setTimeout(() => reject(new Error('Script execution timed out')), 30000);
+            });
+
+            const result = await Promise.race([executionPromise, timeoutPromise]);
             return { result, logs: logBuffer };
         } catch (execError) {
              return { result: `Extraction script execution error: ${execError.message}`, logs: logBuffer };

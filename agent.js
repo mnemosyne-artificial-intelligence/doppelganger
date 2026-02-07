@@ -1,10 +1,9 @@
 const { chromium } = require('playwright');
-const { JSDOM } = require('jsdom');
-const vm = require('vm');
 const fs = require('fs');
 const path = require('path');
 const { getProxySelection } = require('./proxy-rotation');
 const { selectUserAgent } = require('./user-agent-settings');
+const { runExtractionScript } = require('./extraction');
 
 const STORAGE_STATE_PATH = path.join(__dirname, 'storage_state.json');
 const STORAGE_STATE_FILE = (() => {
@@ -1309,7 +1308,7 @@ async function handleAgent(req, res) {
             ? data.extractionScript
             : (data.taskSnapshot && typeof data.taskSnapshot.extractionScript === 'string' ? data.taskSnapshot.extractionScript : undefined);
         const extractionScript = extractionScriptRaw ? resolveTemplate(extractionScriptRaw) : undefined;
-        const extraction = await runExtractionScript(extractionScript, cleanedHtml, page.url(), includeShadowDom);
+        const extraction = await runExtractionScript(page, extractionScript, cleanedHtml, page.url(), includeShadowDom);
 
         // Simple HTML Formatter (fallback to raw if formatting collapses content)
         const formatHTML = (html) => {
@@ -1398,132 +1397,6 @@ async function handleAgent(req, res) {
         } catch {}
         if (browser) await browser.close();
         res.status(500).json({ error: 'Agent failed', details: error.message });
-    }
-}
-
-async function runExtractionScript(script, html, pageUrl, includeShadowDom = true) {
-    if (!script || typeof script !== 'string') return { result: undefined, logs: [] };
-    try {
-        const dom = new JSDOM(html || '');
-        const { window } = dom;
-        const logBuffer = [];
-        const consoleProxy = {
-            log: (...args) => logBuffer.push(args.join(' ')),
-            warn: (...args) => logBuffer.push(args.join(' ')),
-            error: (...args) => logBuffer.push(args.join(' '))
-        };
-        const shadowHelpers = (() => {
-            const shadowQueryAll = (selector, root = window.document) => {
-                const results = [];
-                const walk = (node) => {
-                    if (!node) return;
-                    if (node.nodeType === 1) {
-                        const el = node;
-                        if (selector && el.matches && el.matches(selector)) results.push(el);
-                        if (el.tagName === 'TEMPLATE' && el.hasAttribute('data-shadowroot')) {
-                            walk(el.content);
-                        }
-                    } else if (node.nodeType === 11) {
-                        // DocumentFragment
-                    }
-                    if (node.childNodes) {
-                        node.childNodes.forEach((child) => walk(child));
-                    }
-                };
-                walk(root);
-                return results;
-            };
-
-            const shadowText = (root = window.document) => {
-                const texts = [];
-                const walk = (node) => {
-                    if (!node) return;
-                    if (node.nodeType === 3) {
-                        const text = node.nodeValue ? node.nodeValue.trim() : '';
-                        if (text) texts.push(text);
-                        return;
-                    }
-                    if (node.nodeType === 1) {
-                        const el = node;
-                        if (el.tagName === 'TEMPLATE' && el.hasAttribute('data-shadowroot')) {
-                            walk(el.content);
-                        }
-                    }
-                    if (node.childNodes) {
-                        node.childNodes.forEach((child) => walk(child));
-                    }
-                };
-                walk(root);
-                return texts;
-            };
-
-            return { shadowQueryAll, shadowText };
-        })();
-
-        // Use vm.runInNewContext with a proxy membrane to prevent sandbox escape
-        const proxyCache = new WeakMap();
-        const createSafeProxy = (target) => {
-            if (target === undefined || target === null || (typeof target !== 'object' && typeof target !== 'function')) {
-                return target;
-            }
-            if (proxyCache.has(target)) {
-                return proxyCache.get(target);
-            }
-            const handler = {
-                get(target, prop, receiver) {
-                    if (prop === 'constructor' || prop === '__proto__') {
-                        return undefined;
-                    }
-                    const value = Reflect.get(target, prop, receiver);
-                    if (typeof value === 'function') {
-                        // Bind functions to their target to prevent Illegal Invocation errors
-                        return createSafeProxy(value.bind(target));
-                    }
-                    return createSafeProxy(value);
-                },
-                apply(target, thisArg, argumentsList) {
-                    const result = Reflect.apply(target, thisArg, argumentsList);
-                    return createSafeProxy(result);
-                }
-            };
-            const proxy = new Proxy(target, handler);
-            proxyCache.set(target, proxy);
-            return proxy;
-        };
-
-        const safeWindow = createSafeProxy(window);
-        const safeDocument = createSafeProxy(window.document);
-        const safeConsole = createSafeProxy(consoleProxy);
-        const safeData = createSafeProxy({
-            html: () => html || '',
-            url: () => pageUrl || '',
-            window: safeWindow,
-            document: safeDocument,
-            shadowQueryAll: includeShadowDom ? shadowHelpers.shadowQueryAll : undefined,
-            shadowText: includeShadowDom ? shadowHelpers.shadowText : undefined
-        });
-        const safeDOMParser = createSafeProxy(window.DOMParser);
-
-        const sandbox = Object.create(null); // Use Object.create(null) to prevent prototype leakage
-        sandbox.$$data = safeData;
-        sandbox.window = safeWindow;
-        sandbox.document = safeDocument;
-        sandbox.DOMParser = safeDOMParser;
-        sandbox.console = safeConsole;
-
-        // Wrap script in async IIFE to allow await and top-level execution
-        const code = `(async () => {
-            ${script}
-        })()`;
-
-        const result = await vm.runInNewContext(code, sandbox, {
-            timeout: 2000,
-            displayErrors: false
-        });
-
-        return { result, logs: logBuffer };
-    } catch (e) {
-        return { result: `Extraction script error: ${e.message}`, logs: [] };
     }
 }
 

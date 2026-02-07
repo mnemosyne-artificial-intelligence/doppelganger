@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { getProxySelection } = require('./proxy-rotation');
 const { selectUserAgent } = require('./user-agent-settings');
+const { formatHTML } = require('./html-utils');
 
 const STORAGE_STATE_PATH = path.join(__dirname, 'storage_state.json');
 const STORAGE_STATE_FILE = (() => {
@@ -440,17 +441,6 @@ async function handleScrape(req, res) {
         } catch (e) {
             console.error('Screenshot failed:', e.message);
         }
-
-        // Simple HTML Formatter
-        const formatHTML = (html) => {
-            let indent = 0;
-            return html.replace(/<(\/?)([a-z0-9]+)([^>]*?)(\/?)>/gi, (match, slash, tag, attrs, selfClose) => {
-                if (slash) indent--;
-                const result = '  '.repeat(Math.max(0, indent)) + match;
-                if (!slash && !selfClose && !['img', 'br', 'hr', 'input', 'link', 'meta'].includes(tag.toLowerCase())) indent++;
-                return '\n' + result;
-            }).trim();
-        };
 
         const rawExtraction = extraction.result !== undefined ? extraction.result : (extraction.logs.length ? extraction.logs.join('\n') : undefined);
         const formattedExtraction = extractionFormat === 'csv' ? toCsvString(rawExtraction) : rawExtraction;

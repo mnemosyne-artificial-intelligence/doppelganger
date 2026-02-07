@@ -106,6 +106,13 @@ const authRateLimiter = rateLimit({
     legacyHeaders: false
 });
 
+const settingsRateLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 60,
+    standardHeaders: true,
+    legacyHeaders: false
+});
+
 const sendExecutionUpdate = (runId, payload) => {
     if (!runId) return;
     const clients = executionStreams.get(runId);
@@ -373,7 +380,8 @@ app.use(session({
     cookie: {
         // CodeQL warns about insecure cookies; we only set secure=true when NODE_ENV=production or SESSION_COOKIE_SECURE explicitly enables it.
         secure: SESSION_COOKIE_SECURE,
-        maxAge: SESSION_TTL_SECONDS * 1000
+        maxAge: SESSION_TTL_SECONDS * 1000,
+        sameSite: 'lax'
     }
 }));
 
@@ -522,20 +530,36 @@ app.post('/api/settings/api-key', requireAuthForSettings, (req, res) => {
     }
 });
 
-app.get('/api/settings/user-agent', requireAuthForSettings, (_req, res) => {
+app.get('/api/settings/user-agent', settingsRateLimiter, requireAuthForSettings, async (_req, res) => {
     try {
-        res.json(getUserAgentConfig());
+        res.json(await getUserAgentConfig());
     } catch (e) {
         console.error('[USER_AGENT] Load failed:', e);
         res.status(500).json({ error: 'USER_AGENT_LOAD_FAILED' });
     }
 });
 
-app.post('/api/settings/user-agent', requireAuthForSettings, (req, res) => {
+app.post('/api/settings/user-agent', settingsRateLimiter, requireAuthForSettings, async (req, res) => {
+    // CSRF check: verify content-type is JSON (simple check to prevent simple form posts)
+    if (!req.is('application/json')) {
+        return res.status(400).json({ error: 'INVALID_CONTENT_TYPE' });
+    }
+    // CSRF check: verify Origin matches Host (if present)
+    const origin = req.get('Origin');
+    if (origin) {
+        try {
+            const originHost = new URL(origin).host;
+            if (originHost !== req.get('host')) {
+                return res.status(403).json({ error: 'CSRF_ORIGIN_MISMATCH' });
+            }
+        } catch {
+            return res.status(403).json({ error: 'INVALID_ORIGIN' });
+        }
+    }
     try {
         const selection = req.body && typeof req.body.selection === 'string' ? req.body.selection : null;
-        setUserAgentSelection(selection);
-        res.json(getUserAgentConfig());
+        await setUserAgentSelection(selection);
+        res.json(await getUserAgentConfig());
     } catch (e) {
         console.error('[USER_AGENT] Save failed:', e);
         res.status(500).json({ error: 'USER_AGENT_SAVE_FAILED' });

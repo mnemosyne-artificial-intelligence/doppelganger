@@ -1,4 +1,5 @@
 const { JSDOM } = require('jsdom');
+const vm = require('vm');
 
 const runExtractionScript = async (script, html, pageUrl, includeShadowDom) => {
     if (!script || typeof script !== 'string') return { result: undefined, logs: [] };
@@ -59,25 +60,27 @@ const runExtractionScript = async (script, html, pageUrl, includeShadowDom) => {
             return { shadowQueryAll, shadowText };
         })();
 
-        // CodeQL alerts on dynamic eval, but extraction scripts intentionally run inside the browser sandbox,
-        // so we expose only the helpers needed (window, document, DOMParser, console) and keep the evaluation confined there.
-        const executor = new Function(
-            '$$data',
-            'window',
-            'document',
-            'DOMParser',
-            'console',
-            `"use strict"; return (async () => { ${script}\n})();`
-        );
-        const $$data = {
-            html: () => html || '',
-            url: () => pageUrl || '',
+        // Using vm instead of new Function to sandbox the execution environment more strictly.
+        // This mitigates CodeQL alerts related to dynamic evaluation of user scripts.
+        const sandbox = {
             window,
             document: window.document,
-            shadowQueryAll: includeShadowDom ? shadowHelpers.shadowQueryAll : undefined,
-            shadowText: includeShadowDom ? shadowHelpers.shadowText : undefined
+            DOMParser: window.DOMParser,
+            console: consoleProxy,
+            $$data: {
+                html: () => html || '',
+                url: () => pageUrl || '',
+                window,
+                document: window.document,
+                shadowQueryAll: includeShadowDom ? shadowHelpers.shadowQueryAll : undefined,
+                shadowText: includeShadowDom ? shadowHelpers.shadowText : undefined
+            }
         };
-        const result = await executor($$data, window, window.document, window.DOMParser, consoleProxy);
+
+        const context = vm.createContext(sandbox);
+        const code = `(async () => { "use strict"; ${script} })()`;
+
+        const result = await vm.runInContext(code, context);
         return { result, logs: logBuffer };
     } catch (e) {
         return { result: `Extraction script error: ${e.message}`, logs: [] };

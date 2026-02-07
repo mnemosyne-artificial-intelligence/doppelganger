@@ -32,6 +32,34 @@ if (!SESSION_SECRET) {
 }
 
 const USERS_FILE = path.join(__dirname, 'data', 'users.json');
+
+let usersCache = [];
+function reloadUsers() {
+    try {
+        if (fs.existsSync(USERS_FILE)) {
+            usersCache = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
+        } else {
+            usersCache = [];
+        }
+    } catch (e) {
+        // Keep old cache on error
+    }
+}
+reloadUsers();
+
+try {
+    const dataDir = path.dirname(USERS_FILE);
+    if (fs.existsSync(dataDir)) {
+        fs.watch(dataDir, (eventType, filename) => {
+            if (filename === 'users.json') {
+                reloadUsers();
+            }
+        });
+    }
+} catch (e) {
+    console.error('Failed to setup users file watcher:', e);
+}
+
 const ALLOWED_IPS_FILE = path.join(__dirname, 'data', 'allowed_ips.json');
 const TRUST_PROXY = ['1', 'true', 'yes'].includes(String(process.env.TRUST_PROXY || '').toLowerCase());
 if (TRUST_PROXY) {
@@ -57,9 +85,8 @@ if (!fs.existsSync(SESSIONS_DIR)) {
 
 // Helper to load users
 function loadUsers() {
-    if (!fs.existsSync(USERS_FILE)) return [];
     try {
-        return JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
+        return JSON.parse(JSON.stringify(usersCache));
     } catch (e) {
         return [];
     }
@@ -67,6 +94,7 @@ function loadUsers() {
 
 // Helper to save users
 function saveUsers(users) {
+    usersCache = users;
     fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
 }
 
@@ -220,9 +248,9 @@ function loadApiKey() {
         }
     }
 
-    if (!apiKey && fs.existsSync(USERS_FILE)) {
+    if (!apiKey) {
         try {
-            const users = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
+            const users = loadUsers();
             if (Array.isArray(users) && users.length > 0 && users[0].apiKey) {
                 apiKey = users[0].apiKey;
                 saveApiKey(apiKey);
@@ -238,16 +266,14 @@ function loadApiKey() {
 // Helper to save API key
 function saveApiKey(apiKey) {
     fs.writeFileSync(API_KEY_FILE, JSON.stringify({ apiKey }, null, 2));
-    if (fs.existsSync(USERS_FILE)) {
-        try {
-            const users = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
-            if (Array.isArray(users) && users.length > 0) {
-                users[0].apiKey = apiKey;
-                fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
-            }
-        } catch (e) {
-            // ignore
+    try {
+        const users = loadUsers();
+        if (Array.isArray(users) && users.length > 0) {
+            users[0].apiKey = apiKey;
+            saveUsers(users);
         }
+    } catch (e) {
+        // ignore
     }
 }
 

@@ -427,7 +427,7 @@ async function handleAgent(req, res) {
             ]
         };
         const useRotateProxies = String(rotateProxies).toLowerCase() === 'true' || rotateProxies === true;
-        const selection = getProxySelection(useRotateProxies);
+        const selection = await getProxySelection(useRotateProxies);
         if (selection.proxy) {
             launchOptions.proxy = selection.proxy;
         }

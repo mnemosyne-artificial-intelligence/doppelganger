@@ -73,7 +73,7 @@ async function handleHeadful(req, res) {
                 '--window-position=80,80'
             ]
         };
-        const selection = getProxySelection(rotateProxies);
+        const selection = await getProxySelection(rotateProxies);
         if (selection.proxy) {
             launchOptions.proxy = selection.proxy;
         }

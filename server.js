@@ -543,46 +543,46 @@ app.post('/api/settings/user-agent', requireAuthForSettings, (req, res) => {
 });
 
 // --- PROXY SETTINGS ---
-app.get('/api/settings/proxies', requireAuthForSettings, (_req, res) => {
+app.get('/api/settings/proxies', requireAuthForSettings, async (_req, res) => {
     try {
-        res.json(listProxies());
+        res.json(await listProxies());
     } catch (e) {
         console.error('[PROXIES] Load failed:', e);
         res.status(500).json({ error: 'PROXY_LOAD_FAILED' });
     }
 });
 
-app.post('/api/settings/proxies', requireAuthForSettings, (req, res) => {
+app.post('/api/settings/proxies', requireAuthForSettings, async (req, res) => {
     const { server, username, password, label } = req.body || {};
     if (!server || typeof server !== 'string') {
         return res.status(400).json({ error: 'MISSING_SERVER' });
     }
     try {
-        const result = addProxy({ server, username, password, label });
+        const result = await addProxy({ server, username, password, label });
         if (!result) return res.status(400).json({ error: 'INVALID_PROXY' });
-        res.json(listProxies());
+        res.json(await listProxies());
     } catch (e) {
         console.error('[PROXIES] Add failed:', e);
         res.status(500).json({ error: 'PROXY_SAVE_FAILED' });
     }
 });
 
-app.post('/api/settings/proxies/import', requireAuthForSettings, (req, res) => {
+app.post('/api/settings/proxies/import', requireAuthForSettings, async (req, res) => {
     const entries = req.body && Array.isArray(req.body.proxies) ? req.body.proxies : [];
     if (entries.length === 0) {
         return res.status(400).json({ error: 'MISSING_PROXIES' });
     }
     try {
-        const result = addProxies(entries);
+        const result = await addProxies(entries);
         if (!result) return res.status(400).json({ error: 'INVALID_PROXY' });
-        res.json(listProxies());
+        res.json(await listProxies());
     } catch (e) {
         console.error('[PROXIES] Import failed:', e);
         res.status(500).json({ error: 'PROXY_IMPORT_FAILED' });
     }
 });
 
-app.put('/api/settings/proxies/:id', requireAuthForSettings, (req, res) => {
+app.put('/api/settings/proxies/:id', requireAuthForSettings, async (req, res) => {
     const id = String(req.params.id || '').trim();
     if (!id || id === 'host') return res.status(400).json({ error: 'INVALID_ID' });
     const { server, username, password, label } = req.body || {};
@@ -590,49 +590,49 @@ app.put('/api/settings/proxies/:id', requireAuthForSettings, (req, res) => {
         return res.status(400).json({ error: 'MISSING_SERVER' });
     }
     try {
-        const result = updateProxy(id, { server, username, password, label });
+        const result = await updateProxy(id, { server, username, password, label });
         if (!result) return res.status(404).json({ error: 'PROXY_NOT_FOUND' });
-        res.json(listProxies());
+        res.json(await listProxies());
     } catch (e) {
         console.error('[PROXIES] Update failed:', e);
         res.status(500).json({ error: 'PROXY_UPDATE_FAILED' });
     }
 });
 
-app.delete('/api/settings/proxies/:id', requireAuthForSettings, (req, res) => {
+app.delete('/api/settings/proxies/:id', requireAuthForSettings, async (req, res) => {
     const id = String(req.params.id || '').trim();
     if (!id) return res.status(400).json({ error: 'MISSING_ID' });
     try {
-        const result = deleteProxy(id);
+        const result = await deleteProxy(id);
         if (!result) return res.status(404).json({ error: 'PROXY_NOT_FOUND' });
-        res.json(listProxies());
+        res.json(await listProxies());
     } catch (e) {
         console.error('[PROXIES] Delete failed:', e);
         res.status(500).json({ error: 'PROXY_DELETE_FAILED' });
     }
 });
 
-app.post('/api/settings/proxies/default', requireAuthForSettings, (req, res) => {
+app.post('/api/settings/proxies/default', requireAuthForSettings, async (req, res) => {
     const id = req.body && req.body.id ? String(req.body.id) : '';
     try {
-        const result = setDefaultProxy(id || null);
+        const result = await setDefaultProxy(id || null);
         if (!result) return res.status(404).json({ error: 'PROXY_NOT_FOUND' });
-        res.json(listProxies());
+        res.json(await listProxies());
     } catch (e) {
         console.error('[PROXIES] Default failed:', e);
         res.status(500).json({ error: 'PROXY_DEFAULT_FAILED' });
     }
 });
 
-app.post('/api/settings/proxies/rotation', requireAuthForSettings, (req, res) => {
+app.post('/api/settings/proxies/rotation', requireAuthForSettings, async (req, res) => {
     const body = req.body || {};
     const hasIncludeDefault = Object.prototype.hasOwnProperty.call(body, 'includeDefaultInRotation');
     const includeDefaultInRotation = !!body.includeDefaultInRotation;
     const rotationMode = typeof body.rotationMode === 'string' ? body.rotationMode : null;
     try {
-        if (hasIncludeDefault) setIncludeDefaultInRotation(includeDefaultInRotation);
-        if (rotationMode) setRotationMode(rotationMode);
-        res.json(listProxies());
+        if (hasIncludeDefault) await setIncludeDefaultInRotation(includeDefaultInRotation);
+        if (rotationMode) await setRotationMode(rotationMode);
+        res.json(await listProxies());
     } catch (e) {
         console.error('[PROXIES] Rotation toggle failed:', e);
         res.status(500).json({ error: 'PROXY_ROTATION_FAILED' });
